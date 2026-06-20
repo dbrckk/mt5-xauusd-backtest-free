@@ -56,6 +56,56 @@ return $null
 
 }
 
+function Kill-MT5() {
+
+Get-Process -Name "terminal64","terminal","metaeditor64","metaeditor","metatester64","metatester" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+
+Start-Sleep -Seconds 2
+
+}
+
+function Write-SafeText($text, $password) {
+
+$safe = $text
+
+if ($password) { $safe = $safe.Replace($password, "***") }
+
+Write-Host $safe
+
+}
+
+function Assert-UsableReport($reportPath) {
+
+if (!(Test-Path $reportPath)) { return }
+
+$txt = Get-Content -Path $reportPath -Raw -Encoding Unicode
+
+$isEmpty = $false
+
+if ($txt -match 'History Quality:</td>\s*<td nowrap><b>0%</b></td>' -and
+
+$txt -match 'Bars:</td>\s*<td nowrap><b>0</b></td>' -and
+
+$txt -match 'Ticks:</td>\s*<td nowrap><b>0</b></td>') {
+
+$isEmpty = $true
+
+}
+
+if ($txt -match 'Initial Deposit:</td>\s*<td nowrap colspan="10" align="left"><b>0\.00</b></td>') {
+
+$isEmpty = $true
+
+}
+
+if ($isEmpty) {
+
+throw "MT5 generated an EMPTY report: 0 bars / 0 ticks / 0 history. The broker history was not synchronized. Try a longer sync_minutes value, another exact symbol name, another demo server, or a shorter date range."
+
+}
+
+}
+
 $repo = (Resolve-Path ".").Path
 
 $reportsRoot = Join-Path $repo "reports"
@@ -83,6 +133,14 @@ if ($env:BT_TIMEOUT_MINUTES) { [int]::TryParse($env:BT_TIMEOUT_MINUTES, [ref]$ti
 if ($timeout -lt 15) { $timeout = 15 }
 
 if ($timeout -gt 350) { $timeout = 350 }
+
+$syncMinutes = 12
+
+if ($env:BT_SYNC_MINUTES) { [int]::TryParse($env:BT_SYNC_MINUTES, [ref]$syncMinutes) | Out-Null }
+
+if ($syncMinutes -lt 3) { $syncMinutes = 3 }
+
+if ($syncMinutes -gt 45) { $syncMinutes = 45 }
 
 $eaSource = Join-Path $repo "MQL5\Experts\QuantumQueenStyle_XAU_Grid_PRO_V17_10K_PROFITASYMMETRY.mq5"
 
@@ -122,7 +180,7 @@ $p.WaitForExit(180000) | Out-Null
 
 Start-Sleep -Seconds 20
 
-Get-Process -Name "terminal64","terminal","metaeditor64","metaeditor" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Kill-MT5
 
 }
 
@@ -147,8 +205,6 @@ robocopy $installDir $portable /E /NFL /NDL /NJH /NJS /NC /NS | Out-Null
 $robocopyExit = $LASTEXITCODE
 
 if ($robocopyExit -le 7) {
-
-# Robocopy returns 1 when files were copied. That is success, not failure.
 
 $global:LASTEXITCODE = 0
 
@@ -208,6 +264,58 @@ throw "Compilation failed: EX5 not created. Check compile.log artifact."
 
 Write-Host "Compiled: $ex5"
 
+Section "Pre-sync MT5 with broker before Strategy Tester"
+
+if ($env:MT5_LOGIN -and $env:MT5_PASSWORD -and $env:MT5_SERVER) {
+
+$syncIni = Join-Path $repo "QQ_MT5_PreSync_GHA.ini"
+
+$syncText = @"
+
+[Common]
+
+ProxyEnable=0
+
+NewsEnable=0
+
+CertInstall=1
+
+KeepPrivate=0
+
+Login=$($env:MT5_LOGIN)
+
+Server=$($env:MT5_SERVER)
+
+Password=$($env:MT5_PASSWORD)
+
+[Charts]
+
+MaxBars=500000
+
+"@
+
+Set-Content -Path $syncIni -Value $syncText -Encoding ASCII
+
+Copy-Item $syncIni (Join-Path $reportsRoot "QQ_MT5_PreSync_GHA.ini") -Force
+
+Write-Host "Starting MT5 pre-sync for $syncMinutes minute(s)."
+
+Write-SafeText $syncText $env:MT5_PASSWORD
+
+$syncArgs = "/portable /config:`"$syncIni`""
+
+$syncProc = Start-Process -FilePath $terminalPortable -ArgumentList $syncArgs -PassThru
+
+Start-Sleep -Seconds ($syncMinutes * 60)
+
+Kill-MT5
+
+} else {
+
+Write-Host "Pre-sync skipped: MT5_LOGIN / MT5_PASSWORD / MT5_SERVER secrets are missing."
+
+}
+
 Section "Generate tester configuration"
 
 $reportName = "QQ_V17_${symbol}_${period}_${from}_${to}_model${model}.htm" -replace "[:\\/ ]", "_"
@@ -240,7 +348,7 @@ Write-Host "Broker login: configured from GitHub Secrets. Server=$($env:MT5_SERV
 
 } else {
 
-Write-Host "Broker login: not configured. MT5 will use default/demo availability if possible. For XAUUSD, secrets are strongly recommended."
+Write-Host "Broker login: not configured. For XAUUSD, secrets are strongly recommended."
 
 }
 
@@ -310,11 +418,7 @@ Set-Content -Path $ini -Value $iniText -Encoding ASCII
 
 Copy-Item $ini (Join-Path $reportsRoot "QQ_MT5_Backtest_GHA.ini") -Force
 
-$safeIni = $iniText
-
-if ($env:MT5_PASSWORD) { $safeIni = $safeIni.Replace($env:MT5_PASSWORD, "***") }
-
-Write-Host $safeIni
+Write-SafeText $iniText $env:MT5_PASSWORD
 
 Section "Run Strategy Tester"
 
@@ -328,7 +432,7 @@ if (-not $proc.WaitForExit($timeout * 60 * 1000)) {
 
 Write-Host "Backtest timeout reached. Killing MT5."
 
-Get-Process -Name "terminal64","terminal" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Kill-MT5
 
 throw "Backtest timed out after $timeout minutes. Reduce date range or use Model=0."
 
@@ -395,6 +499,18 @@ if (($reportFiles | Measure-Object).Count -eq 0) {
 Write-Host "No report generated. This usually means: bad symbol name, missing broker data, login/server problem, or MT5 install/start failure. Logs are uploaded as artifact."
 
 throw "No MT5 report generated. Check uploaded logs."
+
+}
+
+# Fail deliberately if MT5 produced a fake/empty report. This prevents wasting time analyzing 0-bar reports.
+
+foreach ($rf in $reportFiles) {
+
+if ($rf.Extension -match 'htm|html') {
+
+Assert-UsableReport $rf.FullName
+
+}
 
 }
 
