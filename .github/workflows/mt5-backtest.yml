@@ -63,6 +63,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Run MT5 Strategy Tester
         shell: pwsh
         run: ./scripts/run-mt5-backtest.ps1
