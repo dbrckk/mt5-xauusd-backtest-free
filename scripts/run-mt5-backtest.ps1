@@ -144,6 +144,20 @@ New-Item -ItemType Directory -Force -Path $portable | Out-Null
 
 robocopy $installDir $portable /E /NFL /NDL /NJH /NJS /NC /NS | Out-Null
 
+$robocopyExit = $LASTEXITCODE
+
+if ($robocopyExit -le 7) {
+
+# Robocopy returns 1 when files were copied. That is success, not failure.
+
+$global:LASTEXITCODE = 0
+
+} else {
+
+throw "Robocopy failed with exit code $robocopyExit"
+
+}
+
 $terminalPortable = Join-Path $portable "terminal64.exe"
 
 $metaeditorPortable = Join-Path $portable "metaeditor64.exe"
@@ -387,3 +401,7 @@ throw "No MT5 report generated. Check uploaded logs."
 Write-Host "Done. Reports:"
 
 $reportFiles | ForEach-Object { Write-Host $_.FullName }
+
+$global:LASTEXITCODE = 0
+
+exit 0
