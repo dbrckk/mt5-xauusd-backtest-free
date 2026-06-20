@@ -170,7 +170,7 @@ $compileLog = Join-Path $reportsRoot "compile.log"
 
 if (Test-Path $compileLog) { Remove-Item $compileLog -Force }
 
-$compileArgs = "/compile:`"$eaDest`" /log:`"$compileLog`""
+$compileArgs = "/portable /compile:`"$eaDest`" /log:`"$compileLog`""
 
 Write-Host "MetaEditor args: $compileArgs"
 
@@ -258,8 +258,6 @@ Symbol=$symbol
 
 Period=$period
 
-Login=123456
-
 Deposit=$deposit
 
 Currency=USD
@@ -298,7 +296,11 @@ Set-Content -Path $ini -Value $iniText -Encoding ASCII
 
 Copy-Item $ini (Join-Path $reportsRoot "QQ_MT5_Backtest_GHA.ini") -Force
 
-Write-Host $iniText.Replace($env:MT5_PASSWORD, "***")
+$safeIni = $iniText
+
+if ($env:MT5_PASSWORD) { $safeIni = $safeIni.Replace($env:MT5_PASSWORD, "***") }
+
+Write-Host $safeIni
 
 Section "Run Strategy Tester"
 
