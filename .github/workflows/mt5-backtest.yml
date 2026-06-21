@@ -14,11 +14,11 @@ on:
       from_date:
         description: "Backtest start date YYYY.MM.DD"
         required: true
-        default: "2025.01.01"
+        default: "2026.06.01"
       to_date:
         description: "Backtest end date YYYY.MM.DD"
         required: true
-        default: "2025.01.15"
+        default: "2026.06.20"
       deposit:
         description: "Initial deposit"
         required: true
@@ -32,7 +32,7 @@ on:
         required: true
         default: "0"
       sync_minutes:
-        description: "Minutes to keep MT5 open before the test so broker history can sync"
+        description: "Unused now; kept for compatibility"
         required: true
         default: "15"
       timeout_minutes:
@@ -63,11 +63,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
       - name: Run MT5 Strategy Tester
         shell: pwsh
         run: ./scripts/run-mt5-backtest.ps1
@@ -79,8 +74,5 @@ jobs:
           name: mt5-v17-backtest-report
           path: |
             reports/**
-            mt5_portable/reports/**
-            mt5_portable/MQL5/Logs/**
-            mt5_portable/Logs/**
           if-no-files-found: warn
           retention-days: 14
