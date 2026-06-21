@@ -40,6 +40,7 @@ period = env("BT_PERIOD", "M15").upper()
 from_s = env("BT_FROM_DATE", "2025.01.01")
 to_s = env("BT_TO_DATE", "2025.01.15")
 sync_minutes = max(3, min(60, int(env("BT_SYNC_MINUTES", "15"))))
+data_path_file = env("MT5_DATA_PATH_FILE")
 
 print("terminal_path=", terminal_path)
 print("server=", server)
@@ -52,15 +53,23 @@ connected = False
 attempts = max(4, min(20, sync_minutes))
 for attempt in range(1, attempts + 1):
     print(f"initialize_attempt={attempt}/{attempts}")
-    ok = mt5.initialize(path=terminal_path, timeout=60000, portable=True)
-    print("initialize_result=", ok, "last_error=", mt5.last_error())
-    if ok:
-        login_ok = mt5.login(login, password=secret, server=server, timeout=60000)
-        print("login_result=", login_ok, "last_error=", mt5.last_error())
-        if login_ok:
-            connected = True
-            break
-        mt5.shutdown()
+    methods = [
+        ("normal", dict(path=terminal_path, timeout=90000)),
+        ("with_login", dict(path=terminal_path, login=login, password=secret, server=server, timeout=90000)),
+        ("portable", dict(path=terminal_path, timeout=90000, portable=True)),
+    ]
+    for label, kwargs in methods:
+        ok = mt5.initialize(**kwargs)
+        print(f"initialize_{label}=", ok, "last_error=", mt5.last_error())
+        if ok:
+            login_ok = mt5.login(login, password=secret, server=server, timeout=90000)
+            print("login_result=", login_ok, "last_error=", mt5.last_error())
+            if login_ok:
+                connected = True
+                break
+            mt5.shutdown()
+    if connected:
+        break
     time.sleep(30)
 
 if not connected:
@@ -73,6 +82,13 @@ if account is None:
     print("NO_ACCOUNT_INFO", mt5.last_error())
     mt5.shutdown()
     sys.exit(13)
+
+term_info = mt5.terminal_info()
+print("terminal_info=", term_info)
+if data_path_file and term_info is not None:
+    with open(data_path_file, "w", encoding="utf-8") as f:
+        f.write(str(term_info.data_path))
+    print("DATA_PATH_WRITTEN=", term_info.data_path)
 
 symbols = mt5.symbols_get()
 if symbols is None:
