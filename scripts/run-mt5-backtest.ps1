@@ -1,10 +1,7 @@
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-function Section($text) {
-  Write-Host ""
-  Write-Host "==================== $text ===================="
-}
+function Section($text) { Write-Host ""; Write-Host "==================== $text ====================" }
 
 function Download-File($urls, $destination) {
   foreach ($url in $urls) {
@@ -12,9 +9,7 @@ function Download-File($urls, $destination) {
       Write-Host "Downloading: $url"
       Invoke-WebRequest -Uri $url -OutFile $destination -UseBasicParsing -TimeoutSec 180
       if ((Test-Path $destination) -and ((Get-Item $destination).Length -gt 100000)) { return $true }
-    } catch {
-      Write-Host "Download failed from $url : $($_.Exception.Message)"
-    }
+    } catch { Write-Host "Download failed from $url : $($_.Exception.Message)" }
   }
   return $false
 }
@@ -43,10 +38,10 @@ function Hide-Secret($text) {
 function Assert-UsableReport($reportPath) {
   if (!(Test-Path $reportPath)) { return }
   try { $txt = Get-Content -Path $reportPath -Raw -Encoding Unicode } catch { $txt = Get-Content -Path $reportPath -Raw }
-  $emptyReport = $false
-  if ($txt -match 'History Quality:</td>\s*<td nowrap><b>0%</b></td>' -and $txt -match 'Bars:</td>\s*<td nowrap><b>0</b></td>' -and $txt -match 'Ticks:</td>\s*<td nowrap><b>0</b></td>') { $emptyReport = $true }
-  if ($txt -match 'Initial Deposit:</td>\s*<td nowrap colspan="10" align="left"><b>0\.00</b></td>') { $emptyReport = $true }
-  if ($emptyReport) { throw "MT5 generated an empty report. Open reports/prefetch_history.log in the artifact." }
+  $empty = $false
+  if ($txt -match 'History Quality:</td>\s*<td nowrap><b>0%</b></td>' -and $txt -match 'Bars:</td>\s*<td nowrap><b>0</b></td>' -and $txt -match 'Ticks:</td>\s*<td nowrap><b>0</b></td>') { $empty = $true }
+  if ($txt -match 'Initial Deposit:</td>\s*<td nowrap colspan="10" align="left"><b>0\.00</b></td>') { $empty = $true }
+  if ($empty) { throw "MT5 generated an empty report. Open reports/prefetch_history.log and terminal logs in the artifact." }
 }
 
 $repo = (Resolve-Path ".").Path
@@ -60,12 +55,10 @@ $to = if ($env:BT_TO_DATE) { $env:BT_TO_DATE } else { (Get-Date).ToString("yyyy.
 $deposit = if ($env:BT_DEPOSIT) { $env:BT_DEPOSIT } else { "10000" }
 $leverage = if ($env:BT_LEVERAGE) { $env:BT_LEVERAGE } else { "1:100" }
 $model = if ($env:BT_MODEL) { $env:BT_MODEL } else { "0" }
-
 $timeout = 330
 if ($env:BT_TIMEOUT_MINUTES) { [int]::TryParse($env:BT_TIMEOUT_MINUTES, [ref]$timeout) | Out-Null }
 if ($timeout -lt 15) { $timeout = 15 }
 if ($timeout -gt 350) { $timeout = 350 }
-
 $syncMinutes = 15
 if ($env:BT_SYNC_MINUTES) { [int]::TryParse($env:BT_SYNC_MINUTES, [ref]$syncMinutes) | Out-Null }
 if ($syncMinutes -lt 3) { $syncMinutes = 3 }
@@ -84,53 +77,23 @@ $installerUrls = @(
 )
 if (!(Download-File $installerUrls $installer)) { throw "Could not download MT5 installer." }
 
-$existingTerminal = Find-File @("C:\Program Files", "C:\Program Files (x86)") "terminal64.exe"
-if ($null -eq $existingTerminal) {
+$terminal = Find-File @("C:\Program Files", "C:\Program Files (x86)") "terminal64.exe"
+if ($null -eq $terminal) {
   Write-Host "Running mt5setup.exe /auto"
   $p = Start-Process -FilePath $installer -ArgumentList "/auto" -PassThru
   $p.WaitForExit(180000) | Out-Null
-  Start-Sleep -Seconds 20
+  Start-Sleep -Seconds 25
   Kill-MT5
 }
-
 $terminal = Find-File @("C:\Program Files", "C:\Program Files (x86)") "terminal64.exe"
 if ($null -eq $terminal) { throw "terminal64.exe not found after MT5 install." }
 $installDir = Split-Path $terminal -Parent
-Write-Host "Found MT5: $terminal"
+$metaeditor = Join-Path $installDir "metaeditor64.exe"
+if (!(Test-Path $metaeditor)) { throw "metaeditor64.exe not found." }
+Write-Host "Found MT5 terminal: $terminal"
+Write-Host "Found MetaEditor: $metaeditor"
 
-Section "Prepare portable MT5 folder"
-$portable = Join-Path $repo "mt5_portable"
-if (Test-Path $portable) { Remove-Item $portable -Recurse -Force }
-New-Item -ItemType Directory -Force -Path $portable | Out-Null
-robocopy $installDir $portable /E /NFL /NDL /NJH /NJS /NC /NS | Out-Null
-$robocopyExit = $LASTEXITCODE
-if ($robocopyExit -le 7) { $global:LASTEXITCODE = 0 } else { throw "Robocopy failed with exit code $robocopyExit" }
-
-$terminalPortable = Join-Path $portable "terminal64.exe"
-$metaeditorPortable = Join-Path $portable "metaeditor64.exe"
-if (!(Test-Path $terminalPortable)) { throw "Portable terminal64.exe missing." }
-if (!(Test-Path $metaeditorPortable)) { throw "Portable metaeditor64.exe missing." }
-
-$portableExperts = Join-Path $portable "MQL5\Experts"
-$portableTester = Join-Path $portable "MQL5\Profiles\Tester"
-$portableReports = Join-Path $portable "reports"
-New-Item -ItemType Directory -Force -Path $portableExperts,$portableTester,$portableReports | Out-Null
-$eaDest = Join-Path $portableExperts ([IO.Path]::GetFileName($eaSource))
-Copy-Item $eaSource $eaDest -Force
-
-Section "Compile EA"
-$compileLog = Join-Path $reportsRoot "compile.log"
-if (Test-Path $compileLog) { Remove-Item $compileLog -Force }
-$compileArgs = "/portable /compile:`"$eaDest`" /log:`"$compileLog`""
-Write-Host "MetaEditor args: $compileArgs"
-$compile = Start-Process -FilePath $metaeditorPortable -ArgumentList $compileArgs -PassThru -Wait
-Start-Sleep -Seconds 3
-if (Test-Path $compileLog) { Get-Content $compileLog | ForEach-Object { Write-Host $_ } }
-$ex5 = [IO.Path]::ChangeExtension($eaDest, ".ex5")
-if (!(Test-Path $ex5)) { throw "Compilation failed: EX5 not created. Check compile.log artifact." }
-Write-Host "Compiled: $ex5"
-
-Section "Warm up MT5 and prefetch broker history"
+Section "Broker warm-up and Python history prefetch using normal installed terminal"
 if (!($env:MT5_LOGIN -and $env:MT5_PASSWORD -and $env:MT5_SERVER)) { throw "MT5_LOGIN / MT5_PASSWORD / MT5_SERVER secrets are missing." }
 
 $preLoginIni = Join-Path $repo "QQ_MT5_PreLogin_GHA.ini"
@@ -152,11 +115,12 @@ Set-Content -Path $preLoginIni -Value $preLoginText -Encoding ASCII
 Copy-Item $preLoginIni (Join-Path $reportsRoot "QQ_MT5_PreLogin_GHA.ini") -Force
 Hide-Secret $preLoginText
 
-Write-Host "Starting terminal warm-up before Python IPC connection..."
-$warmProc = Start-Process -FilePath $terminalPortable -ArgumentList "/portable /config:`"$preLoginIni`"" -PassThru
+Kill-MT5
+$warmProc = Start-Process -FilePath $terminal -ArgumentList "/config:`"$preLoginIni`"" -PassThru
 Start-Sleep -Seconds 90
 
-$env:MT5_TERMINAL_PATH = $terminalPortable
+$env:MT5_TERMINAL_PATH = $terminal
+$env:MT5_DATA_PATH_FILE = Join-Path $reportsRoot "mt5_data_path.txt"
 $prefetchLog = Join-Path $reportsRoot "prefetch_history.log"
 Write-Host "Installing MetaTrader5 Python package..."
 python -m pip install --upgrade pip
@@ -167,9 +131,31 @@ $prefetchExit = $LASTEXITCODE
 Kill-MT5
 if ($prefetchExit -ne 0) { throw "MetaTrader5 Python history prefetch failed with exit code $prefetchExit. Open reports/prefetch_history.log in the artifact." }
 
+$dataPathFile = Join-Path $reportsRoot "mt5_data_path.txt"
+if (!(Test-Path $dataPathFile)) { throw "Python prefetch did not write MT5 data path." }
+$dataPath = (Get-Content $dataPathFile -Raw).Trim()
+if (!(Test-Path $dataPath)) { throw "MT5 data path does not exist: $dataPath" }
+Write-Host "MT5 data path: $dataPath"
+
+Section "Copy and compile EA in normal MT5 data folder"
+$targetExperts = Join-Path $dataPath "MQL5\Experts"
+New-Item -ItemType Directory -Force -Path $targetExperts | Out-Null
+$eaDest = Join-Path $targetExperts ([IO.Path]::GetFileName($eaSource))
+Copy-Item $eaSource $eaDest -Force
+$compileLog = Join-Path $reportsRoot "compile.log"
+if (Test-Path $compileLog) { Remove-Item $compileLog -Force }
+$compileArgs = "/compile:`"$eaDest`" /log:`"$compileLog`""
+Write-Host "MetaEditor args: $compileArgs"
+$compile = Start-Process -FilePath $metaeditor -ArgumentList $compileArgs -PassThru -Wait
+Start-Sleep -Seconds 3
+if (Test-Path $compileLog) { Get-Content $compileLog | ForEach-Object { Write-Host $_ } }
+$ex5 = [IO.Path]::ChangeExtension($eaDest, ".ex5")
+if (!(Test-Path $ex5)) { throw "Compilation failed: EX5 not created. Check compile.log artifact." }
+Write-Host "Compiled: $ex5"
+
 Section "Generate tester configuration"
 $reportName = "QQ_V17_${symbol}_${period}_${from}_${to}_model${model}.htm" -replace "[:\\/ ]", "_"
-$reportRelative = "reports\$reportName"
+$reportPath = Join-Path $reportsRoot $reportName
 $ini = Join-Path $repo "QQ_MT5_Backtest_GHA.ini"
 $commonLines = @(
   "[Common]",
@@ -207,7 +193,7 @@ Optimization=0
 FromDate=$from
 ToDate=$to
 ForwardMode=0
-Report=$reportRelative
+Report=$reportPath
 ReplaceReport=1
 ShutdownTerminal=1
 UseLocal=1
@@ -220,9 +206,9 @@ Copy-Item $ini (Join-Path $reportsRoot "QQ_MT5_Backtest_GHA.ini") -Force
 Hide-Secret $iniText
 
 Section "Run Strategy Tester"
-$terminalArgs = "/portable /config:`"$ini`""
+$terminalArgs = "/config:`"$ini`""
 Write-Host "Terminal args: $terminalArgs"
-$proc = Start-Process -FilePath $terminalPortable -ArgumentList $terminalArgs -PassThru
+$proc = Start-Process -FilePath $terminal -ArgumentList $terminalArgs -PassThru
 if (-not $proc.WaitForExit($timeout * 60 * 1000)) {
   Write-Host "Backtest timeout reached. Killing MT5."
   Kill-MT5
@@ -230,21 +216,19 @@ if (-not $proc.WaitForExit($timeout * 60 * 1000)) {
 }
 Start-Sleep -Seconds 5
 
-Section "Collect reports"
-$expectedReport = Join-Path $portable $reportRelative
-if (Test-Path $expectedReport) {
-  Copy-Item $expectedReport (Join-Path $reportsRoot $reportName) -Force
-  Write-Host "Report saved: $expectedReport"
-  Assert-UsableReport (Join-Path $reportsRoot $reportName)
+Section "Collect reports and logs"
+if (Test-Path $reportPath) {
+  Write-Host "Report saved: $reportPath"
+  Assert-UsableReport $reportPath
 } else {
-  Write-Host "Expected report missing: $expectedReport"
-  Get-ChildItem -Path $portable -Recurse -Include *.htm,*.html,*.xml -ErrorAction SilentlyContinue | ForEach-Object {
+  Write-Host "Expected report missing: $reportPath"
+  Get-ChildItem -Path $dataPath -Recurse -Include *.htm,*.html,*.xml -ErrorAction SilentlyContinue | ForEach-Object {
     Write-Host "Found report-like file: $($_.FullName)"
     Copy-Item $_.FullName $reportsRoot -Force -ErrorAction SilentlyContinue
   }
 }
 
-$logDirs = @((Join-Path $portable "Logs"),(Join-Path $portable "MQL5\Logs"),(Join-Path $portable "Tester\logs"))
+$logDirs = @((Join-Path $dataPath "Logs"),(Join-Path $dataPath "MQL5\Logs"),(Join-Path $dataPath "Tester\logs"),(Join-Path $dataPath "Tester\cache"))
 foreach ($d in $logDirs) {
   if (Test-Path $d) {
     $target = Join-Path $reportsRoot ((Split-Path $d -Leaf) + "_copy")
