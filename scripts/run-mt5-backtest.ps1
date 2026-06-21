@@ -113,11 +113,19 @@ Kill-MT5
 
 $dataRoot = Join-Path $env:APPDATA "MetaQuotes\Terminal"
 if (!(Test-Path $dataRoot)) { throw "MT5 data root not found: $dataRoot" }
+$folderReport = Join-Path $reportsRoot "terminal_data_folders.txt"
+Get-ChildItem -Path $dataRoot -Directory -ErrorAction SilentlyContinue |
+  Select-Object Name, FullName, LastWriteTime |
+  Format-Table -AutoSize |
+  Out-String |
+  Set-Content -Path $folderReport -Encoding UTF8
 $dataPath = Get-ChildItem -Path $dataRoot -Directory -ErrorAction SilentlyContinue |
-  Where-Object { $_.Name -ne "Common" } |
+  Where-Object { $_.Name -notin @("Common", "Community") -and (Test-Path (Join-Path $_.FullName "MQL5")) } |
   Sort-Object LastWriteTime -Descending |
   Select-Object -First 1
-if ($null -eq $dataPath) { throw "No MT5 terminal data folder found under $dataRoot" }
+if ($null -eq $dataPath) {
+  throw "No usable MT5 terminal data folder found under $dataRoot. Open reports/terminal_data_folders.txt in artifact."
+}
 $dataPath = $dataPath.FullName
 Set-Content -Path (Join-Path $reportsRoot "mt5_data_path.txt") -Value $dataPath -Encoding UTF8
 Write-Host "MT5 data path: $dataPath"
