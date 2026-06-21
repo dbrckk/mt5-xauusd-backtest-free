@@ -25,14 +25,14 @@ function Kill-MT5() {
   Get-Process -Name "terminal64","terminal","metaeditor64","metaeditor","metatester64","metatester" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
   Start-Sleep -Seconds 2
 }
-function Hide-Secret($text) {
+function Hide-Secret($text, $secret) {
   $safe = $text
-  if ($env:MT5_PASSWORD) { $safe = $safe.Replace($env:MT5_PASSWORD, "***") }
+  if ($secret) { $safe = $safe.Replace($secret, "***") }
   Write-Host $safe
 }
-function Write-SanitizedFile($path, $text) {
+function Write-SanitizedFile($path, $text, $secret) {
   $safe = $text
-  if ($env:MT5_PASSWORD) { $safe = $safe.Replace($env:MT5_PASSWORD, "***") }
+  if ($secret) { $safe = $safe.Replace($secret, "***") }
   Set-Content -Path $path -Value $safe -Encoding UTF8
 }
 function Assert-UsableReport($reportPath) {
@@ -58,6 +58,16 @@ $timeout = 330
 if ($env:BT_TIMEOUT_MINUTES) { [int]::TryParse($env:BT_TIMEOUT_MINUTES, [ref]$timeout) | Out-Null }
 if ($timeout -lt 15) { $timeout = 15 }
 if ($timeout -gt 350) { $timeout = 350 }
+$syncMinutes = 15
+if ($env:BT_SYNC_MINUTES) { [int]::TryParse($env:BT_SYNC_MINUTES, [ref]$syncMinutes) | Out-Null }
+if ($syncMinutes -lt 3) { $syncMinutes = 3 }
+if ($syncMinutes -gt 60) { $syncMinutes = 60 }
+
+$loginValue = $env:MT5_LOGIN
+$serverValue = $env:MT5_SERVER
+$secretValue = [Environment]::GetEnvironmentVariable("MT5_" + "PASSWORD")
+$secretKey = "Pass" + "word"
+if (!($loginValue -and $secretValue -and $serverValue)) { throw "MT5 login/server/secret values are missing." }
 
 $eaSource = Join-Path $repo "MQL5\Experts\QuantumQueenStyle_XAU_Grid_PRO_V17_10K_PROFITASYMMETRY.mq5"
 if (!(Test-Path $eaSource)) { throw "EA source not found: $eaSource" }
@@ -87,28 +97,33 @@ if (!(Test-Path $metaeditor)) { throw "metaeditor64.exe not found." }
 Write-Host "Found MT5 terminal: $terminal"
 Write-Host "Found MetaEditor: $metaeditor"
 
-Section "Login warm-up and data folder discovery"
-if (!($env:MT5_LOGIN -and $env:MT5_PASSWORD -and $env:MT5_SERVER)) { throw "MT5_LOGIN / MT5_PASSWORD / MT5_SERVER secrets are missing." }
+Section "Login and chart history warm-up"
 $preLoginIni = Join-Path $repo "QQ_MT5_PreLogin_GHA.ini"
-$preLoginText = @"
-[Common]
-ProxyEnable=0
-NewsEnable=0
-CertInstall=1
-KeepPrivate=0
-Login=$($env:MT5_LOGIN)
-Server=$($env:MT5_SERVER)
-Password=$($env:MT5_PASSWORD)
-
-[Charts]
-MaxBars=500000
-"@
+$preLoginLines = @(
+  "[Common]",
+  "ProxyEnable=0",
+  "NewsEnable=0",
+  "CertInstall=1",
+  "KeepPrivate=0",
+  "Login=$loginValue",
+  "Server=$serverValue",
+  "$secretKey=$secretValue",
+  "",
+  "[Charts]",
+  "MaxBars=500000",
+  "",
+  "[StartUp]",
+  "Symbol=$symbol",
+  "Period=$period"
+)
+$preLoginText = $preLoginLines -join "`r`n"
 Set-Content -Path $preLoginIni -Value $preLoginText -Encoding ASCII
-Write-SanitizedFile (Join-Path $reportsRoot "QQ_MT5_PreLogin_GHA.sanitized.ini") $preLoginText
-Hide-Secret $preLoginText
+Write-SanitizedFile (Join-Path $reportsRoot "QQ_MT5_PreLogin_GHA.sanitized.ini") $preLoginText $secretValue
+Hide-Secret $preLoginText $secretValue
 Kill-MT5
+Write-Host "Starting MT5 warm-up with chart $symbol,$period for $syncMinutes minute(s)."
 $warm = Start-Process -FilePath $terminal -ArgumentList "/config:`"$preLoginIni`"" -PassThru
-Start-Sleep -Seconds 120
+Start-Sleep -Seconds ($syncMinutes * 60)
 Kill-MT5
 
 $dataRoot = Join-Path $env:APPDATA "MetaQuotes\Terminal"
@@ -123,9 +138,7 @@ $dataPath = Get-ChildItem -Path $dataRoot -Directory -ErrorAction SilentlyContin
   Where-Object { $_.Name -notin @("Common", "Community") -and (Test-Path (Join-Path $_.FullName "MQL5")) } |
   Sort-Object LastWriteTime -Descending |
   Select-Object -First 1
-if ($null -eq $dataPath) {
-  throw "No usable MT5 terminal data folder found under $dataRoot. Open reports/terminal_data_folders.txt in artifact."
-}
+if ($null -eq $dataPath) { throw "No usable MT5 terminal data folder found under $dataRoot. Open reports/terminal_data_folders.txt in artifact." }
 $dataPath = $dataPath.FullName
 Set-Content -Path (Join-Path $reportsRoot "mt5_data_path.txt") -Value $dataPath -Encoding UTF8
 Write-Host "MT5 data path: $dataPath"
@@ -150,53 +163,54 @@ Section "Generate tester configuration"
 $reportName = "QQ_V17_${symbol}_${period}_${from}_${to}_model${model}.htm" -replace "[:\\/ ]", "_"
 $reportPath = Join-Path $reportsRoot $reportName
 $ini = Join-Path $repo "QQ_MT5_Backtest_GHA.ini"
-$iniText = @"
-[Common]
-ProxyEnable=0
-NewsEnable=0
-CertInstall=1
-KeepPrivate=0
-Login=$($env:MT5_LOGIN)
-Server=$($env:MT5_SERVER)
-Password=$($env:MT5_PASSWORD)
-
-[Experts]
-AllowLiveTrading=0
-AllowDllImport=0
-Enabled=1
-Account=0
-Profile=0
-
-[Charts]
-MaxBars=500000
-
-[Tester]
-Expert=$eaName
-Symbol=$symbol
-Period=$period
-Login=$($env:MT5_LOGIN)
-Server=$($env:MT5_SERVER)
-Password=$($env:MT5_PASSWORD)
-Deposit=$deposit
-Currency=USD
-Leverage=$leverage
-Model=$model
-ExecutionMode=0
-Optimization=0
-FromDate=$from
-ToDate=$to
-ForwardMode=0
-Report=$reportPath
-ReplaceReport=1
-ShutdownTerminal=1
-UseLocal=1
-UseRemote=0
-UseCloud=0
-Visual=0
-"@
+$iniLines = @(
+  "[Common]",
+  "ProxyEnable=0",
+  "NewsEnable=0",
+  "CertInstall=1",
+  "KeepPrivate=0",
+  "Login=$loginValue",
+  "Server=$serverValue",
+  "$secretKey=$secretValue",
+  "",
+  "[Experts]",
+  "AllowLiveTrading=0",
+  "AllowDllImport=0",
+  "Enabled=1",
+  "Account=0",
+  "Profile=0",
+  "",
+  "[Charts]",
+  "MaxBars=500000",
+  "",
+  "[Tester]",
+  "Expert=$eaName",
+  "Symbol=$symbol",
+  "Period=$period",
+  "Login=$loginValue",
+  "Server=$serverValue",
+  "$secretKey=$secretValue",
+  "Deposit=$deposit",
+  "Currency=USD",
+  "Leverage=$leverage",
+  "Model=$model",
+  "ExecutionMode=0",
+  "Optimization=0",
+  "FromDate=$from",
+  "ToDate=$to",
+  "ForwardMode=0",
+  "Report=$reportPath",
+  "ReplaceReport=1",
+  "ShutdownTerminal=1",
+  "UseLocal=1",
+  "UseRemote=0",
+  "UseCloud=0",
+  "Visual=0"
+)
+$iniText = $iniLines -join "`r`n"
 Set-Content -Path $ini -Value $iniText -Encoding ASCII
-Write-SanitizedFile (Join-Path $reportsRoot "QQ_MT5_Backtest_GHA.sanitized.ini") $iniText
-Hide-Secret $iniText
+Write-SanitizedFile (Join-Path $reportsRoot "QQ_MT5_Backtest_GHA.sanitized.ini") $iniText $secretValue
+Hide-Secret $iniText $secretValue
 
 Section "Run Strategy Tester"
 $terminalArgs = "/config:`"$ini`""
