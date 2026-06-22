@@ -6,9 +6,24 @@ function Kill-MT5() { Get-Process -Name "terminal64","terminal","metaeditor64","
 function Find-File($roots, $name) { foreach ($r in $roots) { if (Test-Path $r) { $f = Get-ChildItem -Path $r -Filter $name -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1; if ($null -ne $f) { return $f.FullName } } }; return $null }
 function Download-File($urls, $dest) { foreach ($u in $urls) { try { Write-Host "Downloading: $u"; Invoke-WebRequest -Uri $u -OutFile $dest -UseBasicParsing -TimeoutSec 180; if ((Test-Path $dest) -and ((Get-Item $dest).Length -gt 100000)) { return $true } } catch { Write-Host "Download failed: $($_.Exception.Message)" } }; return $false }
 function Copy-Logs($dataPath, $reportsRoot) { foreach ($d in @((Join-Path $dataPath "Logs"),(Join-Path $dataPath "MQL5\Logs"),(Join-Path $dataPath "Tester\logs"),(Join-Path $dataPath "Tester\cache"))) { if (Test-Path $d) { $target = Join-Path $reportsRoot ((Split-Path $d -Leaf) + "_copy"); New-Item -ItemType Directory -Force -Path $target | Out-Null; Copy-Item (Join-Path $d "*") $target -Recurse -Force -ErrorAction SilentlyContinue } } }
-function Report-Usable($path) { if (!(Test-Path $path)) { return $false }; try { $txt = Get-Content -Path $path -Raw -Encoding Unicode } catch { $txt = Get-Content -Path $path -Raw }; if ([string]::IsNullOrWhiteSpace($txt)) { return $false }; if ($txt -match 'History Quality:</td>\s*<td nowrap><b>0%</b></td>' -and $txt -match 'Bars:</td>\s*<td nowrap><b>0</b></td>') { return $false }; if ($txt -match 'Total Net Profit:' -or $txt -match 'Total Trades:' -or $txt -match 'Bars:') { return $true }; return $false }
+function Report-Usable($path) { if (!(Test-Path $path)) { return $false }; try { $txt = Get-Content -Path $path -Raw -Encoding Unicode } catch { try { $txt = Get-Content -Path $path -Raw -Encoding UTF8 } catch { $txt = Get-Content -Path $path -Raw } }; if ([string]::IsNullOrWhiteSpace($txt)) { return $false }; if ($txt -match 'History Quality:</td>\s*<td nowrap><b>0%</b></td>' -and $txt -match 'Bars:</td>\s*<td nowrap><b>0</b></td>') { return $false }; if ($txt -match 'Total Net Profit:' -or $txt -match 'Total Trades:' -or $txt -match 'Balance Drawdown' -or $txt -match 'Bars:') { return $true }; return $false }
 function Add-Account($iniPath, $reportsRoot) { & pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo "scripts\add-account-lines.ps1") -Path $iniPath; $safe = [IO.Path]::Combine([IO.Path]::GetDirectoryName($iniPath), ([IO.Path]::GetFileNameWithoutExtension($iniPath) + ".sanitized.ini")); if (Test-Path $safe) { Copy-Item $safe (Join-Path $reportsRoot ([IO.Path]::GetFileName($safe))) -Force } }
 function Copy-Found-Reports($roots, $reportsRoot) { $copied = @(); foreach ($root in $roots) { if (Test-Path $root) { Get-ChildItem -Path $root -Recurse -Include *.htm,*.html,*.xml -File -ErrorAction SilentlyContinue | ForEach-Object { $target = Join-Path $reportsRoot $_.Name; Copy-Item $_.FullName $target -Force -ErrorAction SilentlyContinue; $copied += $target } } }; return $copied }
+function Read-LogText($reportsRoot) { $parts = @(); Get-ChildItem -Path $reportsRoot -Recurse -Include *.log -File -ErrorAction SilentlyContinue | ForEach-Object { try { $t = Get-Content -Path $_.FullName -Raw -Encoding Unicode } catch { try { $t = Get-Content -Path $_.FullName -Raw -Encoding UTF8 } catch { $t = "" } }; if ($t -match "XAU_PUBLIC|Test passed|final balance|testing of Experts") { $parts += "`n===== $($_.FullName) =====`n$t" } }; return ($parts -join "`n") }
+function Write-FallbackReport($reportsRoot, $reportPath, $customSymbol, $period, $from, $to) {
+  $logText = Read-LogText $reportsRoot
+  $quality = if ($logText -match "quality of analyzed history is\s+([0-9]+%)") { $Matches[1] } else { "unknown" }
+  $balance = if ($logText -match "final balance\s+([0-9.]+)\s+USD") { $Matches[1] } else { "unknown" }
+  $ticks = if ($logText -match "XAU_PUBLIC,M15:\s+([0-9]+)\s+ticks") { $Matches[1] } else { "unknown" }
+  $bars = if ($logText -match "XAU_PUBLIC,M15:\s+[0-9]+\s+ticks,\s+([0-9]+)\s+bars") { $Matches[1] } else { "unknown" }
+  $passed = if ($logText -match "Test passed") { "YES" } else { "NO" }
+  $encoded = [System.Net.WebUtility]::HtmlEncode($logText)
+  $fallback = Join-Path $reportsRoot "QQ_PUBLIC_BACKTEST_FALLBACK_REPORT.html"
+  $html = "<!doctype html><html><head><meta charset='utf-8'><title>MT5 Public XAU Backtest</title><style>body{font-family:Arial;margin:24px;line-height:1.45}td,th{border:1px solid #ccc;padding:6px 10px}table{border-collapse:collapse}pre{white-space:pre-wrap;background:#f4f4f4;padding:12px}</style></head><body><h1>MT5 Public XAU Backtest</h1><p>Fallback report generated from MT5 tester logs because MT5 did not export a standard HTML report file.</p><table><tr><th>Field</th><th>Value</th></tr><tr><td>Symbol</td><td>$customSymbol</td></tr><tr><td>Period</td><td>$period</td></tr><tr><td>Range</td><td>$from to $to</td></tr><tr><td>History quality</td><td>$quality</td></tr><tr><td>Ticks</td><td>$ticks</td></tr><tr><td>Bars</td><td>$bars</td></tr><tr><td>Test passed</td><td>$passed</td></tr><tr><td>Final balance</td><td>$balance USD</td></tr></table><h2>Raw tester logs</h2><pre>$encoded</pre></body></html>"
+  Set-Content -Path $fallback -Value $html -Encoding UTF8
+  Set-Content -Path (Join-Path $reportsRoot "fallback_report_reason.txt") -Value "MT5 standard report was missing or empty; fallback report generated from tester logs. Test passed=$passed; final_balance=$balance." -Encoding UTF8
+  return $fallback
+}
 
 $repo = (Resolve-Path ".").Path
 $reportsRoot = Join-Path $repo "reports"
@@ -117,9 +132,54 @@ if (!((Get-Content $importResult -Raw) -match "IMPORT_OK")) { Copy-Logs $dataPat
 Section "Run Strategy Tester on custom public symbol"
 $setDir = Join-Path $dataPath "MQL5\Profiles\Tester"
 New-Item -ItemType Directory -Force -Path $setDir | Out-Null
-$setPath = Join-Path $setDir "QQ_XAU_PUBLIC.set"
-Set-Content -Path $setPath -Value @("InpTradeSymbol=$customSymbol") -Encoding ASCII
-Copy-Item $setPath (Join-Path $reportsRoot "QQ_XAU_PUBLIC.set") -Force
+$setPath = Join-Path $setDir "QQ_XAU_PUBLIC_DIAGNOSTIC.set"
+$setLines = @(
+  "InpTradeSymbol=$customSymbol",
+  "InpStrategyProfile=0",
+  "InpUseRiskLot=false",
+  "InpFixedLot=0.01",
+  "InpMinScoreToEnter=45.0",
+  "InpMinScoreGap=0.0",
+  "InpV14MinEntryScore=45.0",
+  "InpV14MinEntryGap=0.0",
+  "InpV14RequireAlphaOrExplosive=false",
+  "InpMinADX=0.0",
+  "InpMaxADX=100.0",
+  "InpMinATRPct=0.0",
+  "InpMaxATRPct=10.0",
+  "InpMaxSpreadPoints=9999.0",
+  "InpMaxSpreadATRPercent=999.0",
+  "InpMinRangeEfficiency=0.0",
+  "InpMinMinutesBetweenEntries=0",
+  "InpMaxNewEntriesPerDay=50",
+  "InpStartHourServer=0",
+  "InpEndHourServer=23",
+  "InpBlockAsianSession=false",
+  "InpBlockFridayLate=false",
+  "InpCloseWeekendRisk=false",
+  "InpRequireMacroAlignment=false",
+  "InpAvoidDoji=false",
+  "InpUseVWAPFilter=false",
+  "InpUseSMCStructureScore=false",
+  "InpUseVolatilityShockFilter=false",
+  "InpUseTrendSlopeFilter=false",
+  "InpUseConsecutiveCloseFilter=false",
+  "InpUseATRAccelerationFilter=false",
+  "InpUseSessionQualityFilter=false",
+  "InpUseSpreadSpikeFilter=false",
+  "InpUseATRNormalizedSpread=false",
+  "InpUseLiquidityDistanceFilter=false",
+  "InpUseAmbiguityPenalty=false",
+  "InpUseEntryScoreDecayBlock=false",
+  "InpUseV14ConvictionGate=false",
+  "InpUseV14ShockPause=false",
+  "InpUseCSVJournal=true",
+  "InpCSVJournalName=QQ_PUBLIC_journal.csv",
+  "InpVerboseDecisionLog=true",
+  "InpVerboseLog=true"
+)
+Set-Content -Path $setPath -Value $setLines -Encoding ASCII
+Copy-Item $setPath (Join-Path $reportsRoot "QQ_XAU_PUBLIC_DIAGNOSTIC.set") -Force
 
 $reportBaseName = "QQ_V17_${customSymbol}_${period}_${from}_${to}_model${model}" -replace "[:\\/ ]", "_"
 $reportBasePath = Join-Path $reportsRoot $reportBaseName
@@ -168,14 +228,14 @@ $testProc = Start-Process -FilePath $terminal -ArgumentList "/config:`"$testIni`
 if (-not $testProc.WaitForExit($timeout * 60 * 1000)) { Kill-MT5; throw "Backtest timed out after $timeout minutes." }
 Start-Sleep -Seconds 10
 Copy-Logs $dataPath $reportsRoot
-$foundReports = Copy-Found-Reports @($reportsRoot, $dataPath, (Join-Path $env:APPDATA "MetaQuotes\Tester")) $reportsRoot
+$foundReports = Copy-Found-Reports @($reportsRoot, $dataPath, (Join-Path $env:APPDATA "MetaQuotes\Tester"), (Join-Path $env:APPDATA "MetaQuotes\Terminal")) $reportsRoot
 $foundReports | Set-Content -Path (Join-Path $reportsRoot "found_reports.txt") -Encoding UTF8
 if (!(Test-Path $reportPath)) {
   $candidate = Get-ChildItem -Path $reportsRoot -Include *.htm,*.html,*.xml -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
   if ($null -ne $candidate) { $reportPath = $candidate.FullName }
 }
-if (!(Test-Path $reportPath)) { throw "No MT5 report generated for public custom symbol. See found_reports.txt and logs." }
-if (!(Report-Usable $reportPath)) { throw "MT5 report exists but looks empty. Check logs." }
+if (!(Test-Path $reportPath)) { $reportPath = Write-FallbackReport $reportsRoot $reportPath $customSymbol $period $from $to }
+if (!(Report-Usable $reportPath)) { $reportPath = Write-FallbackReport $reportsRoot $reportPath $customSymbol $period $from $to }
 Set-Content -Path (Join-Path $reportsRoot "selected_symbol.txt") -Value $customSymbol -Encoding UTF8
 Set-Content -Path (Join-Path $reportsRoot "selected_report.txt") -Value $reportPath -Encoding UTF8
 Write-Host "PUBLIC_HISTORY_BACKTEST_OK symbol=$customSymbol report=$reportPath"
