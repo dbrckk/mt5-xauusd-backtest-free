@@ -1,78 +1,143 @@
 name: MT5 Free Cloud Backtest - XAUUSD V17
 
 on:
-  workflow_dispatch:
-    inputs:
-      symbol:
-        description: "Ignored by public-history mode; custom symbol is XAU_PUBLIC"
-        required: true
-        default: "XAU_PUBLIC"
-      period:
-        description: "MT5 timeframe"
-        required: true
-        default: "M15"
-      from_date:
-        description: "Backtest start date YYYY.MM.DD"
-        required: true
-        default: "2026.06.01"
-      to_date:
-        description: "Backtest end date YYYY.MM.DD"
-        required: true
-        default: "2026.06.20"
-      deposit:
-        description: "Initial deposit"
-        required: true
-        default: "10000"
-      leverage:
-        description: "Leverage"
-        required: true
-        default: "1:100"
-      model:
-        description: "0=Every tick, 4=Every tick based on real ticks"
-        required: true
-        default: "0"
-      sync_minutes:
-        description: "Unused; kept for compatibility"
-        required: true
-        default: "15"
-      timeout_minutes:
-        description: "Total stop limit"
-        required: true
-        default: "180"
+
+workflow_dispatch:
+
+inputs:
+
+symbol:
+
+description: "Ignored by public-history mode; custom symbol is XAU_PUBLIC"
+
+required: true
+
+default: "XAU_PUBLIC"
+
+period:
+
+description: "MT5 timeframe"
+
+required: true
+
+default: "M15"
+
+from_date:
+
+description: "Backtest start date YYYY.MM.DD"
+
+required: true
+
+default: "2026.06.01"
+
+to_date:
+
+description: "Backtest end date YYYY.MM.DD"
+
+required: true
+
+default: "2026.06.20"
+
+deposit:
+
+description: "Initial deposit"
+
+required: true
+
+default: "10000"
+
+leverage:
+
+description: "Leverage"
+
+required: true
+
+default: "1:100"
+
+model:
+
+description: "0=Every tick, 4=Every tick based on real ticks"
+
+required: true
+
+default: "0"
+
+sync_minutes:
+
+description: "Unused; kept for compatibility"
+
+required: true
+
+default: "15"
+
+timeout_minutes:
+
+description: "Total stop limit"
+
+required: true
+
+default: "180"
 
 jobs:
-  mt5-backtest:
-    runs-on: windows-latest
-    timeout-minutes: 360
 
-    env:
-      BT_SYMBOL: ${{ github.event.inputs.symbol }}
-      BT_PERIOD: ${{ github.event.inputs.period }}
-      BT_FROM_DATE: ${{ github.event.inputs.from_date }}
-      BT_TO_DATE: ${{ github.event.inputs.to_date }}
-      BT_DEPOSIT: ${{ github.event.inputs.deposit }}
-      BT_LEVERAGE: ${{ github.event.inputs.leverage }}
-      BT_MODEL: ${{ github.event.inputs.model }}
-      BT_SYNC_MINUTES: ${{ github.event.inputs.sync_minutes }}
-      BT_TIMEOUT_MINUTES: ${{ github.event.inputs.timeout_minutes }}
-      MT5_LOGIN: ${{ secrets[format('MT5_{0}', 'LOGIN')] }}
-      MT5_PASSWORD: ${{ secrets[format('MT5_{0}', 'PASSWORD')] }}
-      MT5_SERVER: ${{ secrets[format('MT5_{0}', 'SERVER')] }}
+mt5-backtest:
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+runs-on: windows-latest
 
-      - name: Download public XAU history, import custom symbol, run MT5 Strategy Tester
-        shell: pwsh
-        run: ./scripts/run-public-history-backtest.ps1
+timeout-minutes: 360
 
-      - name: Upload MT5 reports and logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: mt5-v17-backtest-report
-          path: |
-            reports/**
-          if-no-files-found: warn
-          retention-days: 14
+env:
+
+BT_SYMBOL: ${{ github.event.inputs.symbol }}
+
+BT_PERIOD: ${{ github.event.inputs.period }}
+
+BT_FROM_DATE: ${{ github.event.inputs.from_date }}
+
+BT_TO_DATE: ${{ github.event.inputs.to_date }}
+
+BT_DEPOSIT: ${{ github.event.inputs.deposit }}
+
+BT_LEVERAGE: ${{ github.event.inputs.leverage }}
+
+BT_MODEL: ${{ github.event.inputs.model }}
+
+BT_SYNC_MINUTES: ${{ github.event.inputs.sync_minutes }}
+
+BT_TIMEOUT_MINUTES: ${{ github.event.inputs.timeout_minutes }}
+
+MT5_LOGIN: ${{ secrets[format('MT5_{0}', 'LOGIN')] }}
+
+MT5_PASSWORD: ${{ secrets[format('MT5_{0}', 'PASSWORD')] }}
+
+MT5_SERVER: ${{ secrets[format('MT5_{0}', 'SERVER')] }}
+
+steps:
+
+- name: Checkout repository
+
+uses: actions/checkout@v4
+
+- name: Download public XAU history, tune EA, import custom symbol, run MT5 Strategy Tester
+
+shell: pwsh
+
+run: ./scripts/run-public-history-backtest.ps1
+
+- name: Upload MT5 reports and logs
+
+if: always()
+
+uses: actions/upload-artifact@v4
+
+with:
+
+name: mt5-v17-backtest-report
+
+path: |
+
+reports/**
+
+if-no-files-found: warn
+
+retention-days: 14
