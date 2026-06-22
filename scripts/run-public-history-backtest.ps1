@@ -8,6 +8,7 @@ function Download-File($urls, $dest) { foreach ($u in $urls) { try { Write-Host 
 function Copy-Logs($dataPath, $reportsRoot) { foreach ($d in @((Join-Path $dataPath "Logs"),(Join-Path $dataPath "MQL5\Logs"),(Join-Path $dataPath "Tester\logs"),(Join-Path $dataPath "Tester\cache"))) { if (Test-Path $d) { $target = Join-Path $reportsRoot ((Split-Path $d -Leaf) + "_copy"); New-Item -ItemType Directory -Force -Path $target | Out-Null; Copy-Item (Join-Path $d "*") $target -Recurse -Force -ErrorAction SilentlyContinue } } }
 function Report-Usable($path) { if (!(Test-Path $path)) { return $false }; try { $txt = Get-Content -Path $path -Raw -Encoding Unicode } catch { $txt = Get-Content -Path $path -Raw }; if ([string]::IsNullOrWhiteSpace($txt)) { return $false }; if ($txt -match 'History Quality:</td>\s*<td nowrap><b>0%</b></td>' -and $txt -match 'Bars:</td>\s*<td nowrap><b>0</b></td>') { return $false }; if ($txt -match 'Total Net Profit:' -or $txt -match 'Total Trades:' -or $txt -match 'Bars:') { return $true }; return $false }
 function Add-Account($iniPath, $reportsRoot) { & pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo "scripts\add-account-lines.ps1") -Path $iniPath; $safe = [IO.Path]::Combine([IO.Path]::GetDirectoryName($iniPath), ([IO.Path]::GetFileNameWithoutExtension($iniPath) + ".sanitized.ini")); if (Test-Path $safe) { Copy-Item $safe (Join-Path $reportsRoot ([IO.Path]::GetFileName($safe))) -Force } }
+function Copy-Found-Reports($roots, $reportsRoot) { $copied = @(); foreach ($root in $roots) { if (Test-Path $root) { Get-ChildItem -Path $root -Recurse -Include *.htm,*.html,*.xml -File -ErrorAction SilentlyContinue | ForEach-Object { $target = Join-Path $reportsRoot $_.Name; Copy-Item $_.FullName $target -Force -ErrorAction SilentlyContinue; $copied += $target } } }; return $copied }
 
 $repo = (Resolve-Path ".").Path
 $reportsRoot = Join-Path $repo "reports"
@@ -114,8 +115,15 @@ if (Test-Path $importResult) { Copy-Item $importResult (Join-Path $reportsRoot "
 if (!((Get-Content $importResult -Raw) -match "IMPORT_OK")) { Copy-Logs $dataPath $reportsRoot; throw "Custom symbol import failed." }
 
 Section "Run Strategy Tester on custom public symbol"
-$reportName = "QQ_V17_${customSymbol}_${period}_${from}_${to}_model${model}.htm" -replace "[:\\/ ]", "_"
-$reportPath = Join-Path $reportsRoot $reportName
+$setDir = Join-Path $dataPath "MQL5\Profiles\Tester"
+New-Item -ItemType Directory -Force -Path $setDir | Out-Null
+$setPath = Join-Path $setDir "QQ_XAU_PUBLIC.set"
+Set-Content -Path $setPath -Value @("InpTradeSymbol=$customSymbol") -Encoding ASCII
+Copy-Item $setPath (Join-Path $reportsRoot "QQ_XAU_PUBLIC.set") -Force
+
+$reportBaseName = "QQ_V17_${customSymbol}_${period}_${from}_${to}_model${model}" -replace "[:\\/ ]", "_"
+$reportBasePath = Join-Path $reportsRoot $reportBaseName
+$reportPath = "$reportBasePath.htm"
 $testIni = Join-Path $repo "QQ_MT5_PublicHistory_Backtest.ini"
 $testText = @"
 [Experts]
@@ -130,6 +138,7 @@ MaxBars=1000000
 
 [Tester]
 Expert=$eaName
+ExpertParameters=$setPath
 Symbol=$customSymbol
 Period=$period
 Deposit=$deposit
@@ -141,13 +150,16 @@ Optimization=0
 FromDate=$from
 ToDate=$to
 ForwardMode=0
-Report=$reportPath
+Report=$reportBasePath
 ReplaceReport=1
 ShutdownTerminal=1
 UseLocal=1
 UseRemote=0
 UseCloud=0
 Visual=0
+
+[TesterInputs]
+InpTradeSymbol=$customSymbol
 "@
 Set-Content -Path $testIni -Value $testText -Encoding ASCII
 Add-Account $testIni $reportsRoot
@@ -156,8 +168,15 @@ $testProc = Start-Process -FilePath $terminal -ArgumentList "/config:`"$testIni`
 if (-not $testProc.WaitForExit($timeout * 60 * 1000)) { Kill-MT5; throw "Backtest timed out after $timeout minutes." }
 Start-Sleep -Seconds 10
 Copy-Logs $dataPath $reportsRoot
-if (!(Test-Path $reportPath)) { throw "No MT5 report generated for public custom symbol." }
+$foundReports = Copy-Found-Reports @($reportsRoot, $dataPath, (Join-Path $env:APPDATA "MetaQuotes\Tester")) $reportsRoot
+$foundReports | Set-Content -Path (Join-Path $reportsRoot "found_reports.txt") -Encoding UTF8
+if (!(Test-Path $reportPath)) {
+  $candidate = Get-ChildItem -Path $reportsRoot -Include *.htm,*.html,*.xml -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+  if ($null -ne $candidate) { $reportPath = $candidate.FullName }
+}
+if (!(Test-Path $reportPath)) { throw "No MT5 report generated for public custom symbol. See found_reports.txt and logs." }
 if (!(Report-Usable $reportPath)) { throw "MT5 report exists but looks empty. Check logs." }
 Set-Content -Path (Join-Path $reportsRoot "selected_symbol.txt") -Value $customSymbol -Encoding UTF8
+Set-Content -Path (Join-Path $reportsRoot "selected_report.txt") -Value $reportPath -Encoding UTF8
 Write-Host "PUBLIC_HISTORY_BACKTEST_OK symbol=$customSymbol report=$reportPath"
 exit 0
