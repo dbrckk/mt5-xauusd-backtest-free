@@ -138,6 +138,10 @@ $setLines = @(
   "InpStrategyProfile=0",
   "InpUseRiskLot=false",
   "InpFixedLot=0.01",
+  "InpForceTenKLotBand=false",
+  "InpMaxAllowedSingleLot=0.10",
+  "InpMaxAllowedTotalLots=0.20",
+  "InpMaxTotalLots=0.20",
   "InpMinScoreToEnter=45.0",
   "InpMinScoreGap=0.0",
   "InpV14MinEntryScore=45.0",
@@ -180,6 +184,7 @@ $setLines = @(
 )
 Set-Content -Path $setPath -Value $setLines -Encoding ASCII
 Copy-Item $setPath (Join-Path $reportsRoot "QQ_XAU_PUBLIC_DIAGNOSTIC.set") -Force
+$testerInputs = $setLines -join "`r`n"
 
 $reportBaseName = "QQ_V17_${customSymbol}_${period}_${from}_${to}_model${model}" -replace "[:\\/ ]", "_"
 $reportBasePath = Join-Path $reportsRoot $reportBaseName
@@ -219,7 +224,7 @@ UseCloud=0
 Visual=0
 
 [TesterInputs]
-InpTradeSymbol=$customSymbol
+$testerInputs
 "@
 Set-Content -Path $testIni -Value $testText -Encoding ASCII
 Add-Account $testIni $reportsRoot
