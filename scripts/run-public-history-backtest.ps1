@@ -7,6 +7,7 @@ function Find-File($roots, $name) { foreach ($r in $roots) { if (Test-Path $r) {
 function Download-File($urls, $dest) { foreach ($u in $urls) { try { Write-Host "Downloading: $u"; Invoke-WebRequest -Uri $u -OutFile $dest -UseBasicParsing -TimeoutSec 180; if ((Test-Path $dest) -and ((Get-Item $dest).Length -gt 100000)) { return $true } } catch { Write-Host "Download failed: $($_.Exception.Message)" } }; return $false }
 function Copy-Logs($dataPath, $reportsRoot) { foreach ($d in @((Join-Path $dataPath "Logs"),(Join-Path $dataPath "MQL5\Logs"),(Join-Path $dataPath "Tester\logs"),(Join-Path $dataPath "Tester\cache"))) { if (Test-Path $d) { $target = Join-Path $reportsRoot ((Split-Path $d -Leaf) + "_copy"); New-Item -ItemType Directory -Force -Path $target | Out-Null; Copy-Item (Join-Path $d "*") $target -Recurse -Force -ErrorAction SilentlyContinue } } }
 function Report-Usable($path) { if (!(Test-Path $path)) { return $false }; try { $txt = Get-Content -Path $path -Raw -Encoding Unicode } catch { $txt = Get-Content -Path $path -Raw }; if ([string]::IsNullOrWhiteSpace($txt)) { return $false }; if ($txt -match 'History Quality:</td>\s*<td nowrap><b>0%</b></td>' -and $txt -match 'Bars:</td>\s*<td nowrap><b>0</b></td>') { return $false }; if ($txt -match 'Total Net Profit:' -or $txt -match 'Total Trades:' -or $txt -match 'Bars:') { return $true }; return $false }
+function Add-Account($iniPath, $reportsRoot) { & pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo "scripts\add-account-lines.ps1") -Path $iniPath; $safe = [IO.Path]::Combine([IO.Path]::GetDirectoryName($iniPath), ([IO.Path]::GetFileNameWithoutExtension($iniPath) + ".sanitized.ini")); if (Test-Path $safe) { Copy-Item $safe (Join-Path $reportsRoot ([IO.Path]::GetFileName($safe))) -Force } }
 
 $repo = (Resolve-Path ".").Path
 $reportsRoot = Join-Path $repo "reports"
@@ -103,7 +104,7 @@ Period=M1
 Expert=$importerName
 "@
 Set-Content -Path $importIni -Value $importText -Encoding ASCII
-Set-Content -Path (Join-Path $reportsRoot "QQ_MT5_ImportCustomSymbol.ini") -Value $importText -Encoding UTF8
+Add-Account $importIni $reportsRoot
 Kill-MT5
 $proc = Start-Process -FilePath $terminal -ArgumentList "/config:`"$importIni`"" -PassThru
 if (-not $proc.WaitForExit(8 * 60 * 1000)) { Kill-MT5; throw "Custom symbol importer timed out." }
@@ -149,7 +150,7 @@ UseCloud=0
 Visual=0
 "@
 Set-Content -Path $testIni -Value $testText -Encoding ASCII
-Set-Content -Path (Join-Path $reportsRoot "QQ_MT5_PublicHistory_Backtest.ini") -Value $testText -Encoding UTF8
+Add-Account $testIni $reportsRoot
 Kill-MT5
 $testProc = Start-Process -FilePath $terminal -ArgumentList "/config:`"$testIni`"" -PassThru
 if (-not $testProc.WaitForExit($timeout * 60 * 1000)) { Kill-MT5; throw "Backtest timed out after $timeout minutes." }
