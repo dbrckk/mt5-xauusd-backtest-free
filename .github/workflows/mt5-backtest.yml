@@ -1,44 +1,53 @@
-name: MT5 Free Cloud Backtest - XAUUSD V17
+name: MT5 XAU Public Backtest
 
 on:
   workflow_dispatch:
     inputs:
       symbol:
-        description: "Ignored by public-history mode; custom symbol is XAU_PUBLIC"
+        description: "Custom symbol used by the public-history runner"
         required: true
         default: "XAU_PUBLIC"
+        type: string
       period:
         description: "MT5 timeframe"
         required: true
         default: "M15"
+        type: string
       from_date:
         description: "Backtest start date YYYY.MM.DD"
         required: true
         default: "2026.06.01"
+        type: string
       to_date:
         description: "Backtest end date YYYY.MM.DD"
         required: true
         default: "2026.06.20"
+        type: string
       deposit:
         description: "Initial deposit"
         required: true
         default: "10000"
+        type: string
       leverage:
         description: "Leverage"
         required: true
         default: "1:100"
+        type: string
       model:
         description: "0=Every tick, 4=Every tick based on real ticks"
         required: true
         default: "0"
+        type: string
       sync_minutes:
-        description: "Unused; kept for compatibility"
+        description: "Compatibility input"
         required: true
         default: "15"
+        type: string
       timeout_minutes:
-        description: "Total stop limit"
+        description: "Total timeout in minutes"
         required: true
         default: "180"
+        type: string
 
 permissions:
   contents: read
@@ -46,23 +55,23 @@ permissions:
 
 jobs:
   mt5-backtest:
-    name: MT5 XAU_PUBLIC Backtest
+    name: Run MT5 public XAU backtest
     runs-on: windows-latest
     timeout-minutes: 360
 
     env:
-      BT_SYMBOL: ${{ github.event.inputs.symbol }}
-      BT_PERIOD: ${{ github.event.inputs.period }}
-      BT_FROM_DATE: ${{ github.event.inputs.from_date }}
-      BT_TO_DATE: ${{ github.event.inputs.to_date }}
-      BT_DEPOSIT: ${{ github.event.inputs.deposit }}
-      BT_LEVERAGE: ${{ github.event.inputs.leverage }}
-      BT_MODEL: ${{ github.event.inputs.model }}
-      BT_SYNC_MINUTES: ${{ github.event.inputs.sync_minutes }}
-      BT_TIMEOUT_MINUTES: ${{ github.event.inputs.timeout_minutes }}
-      MT5_LOGIN: ${{ secrets[format('MT5_{0}', 'LOGIN')] }}
-      MT5_PASSWORD: ${{ secrets[format('MT5_{0}', 'PASSWORD')] }}
-      MT5_SERVER: ${{ secrets[format('MT5_{0}', 'SERVER')] }}
+      BT_SYMBOL: ${{ inputs.symbol }}
+      BT_PERIOD: ${{ inputs.period }}
+      BT_FROM_DATE: ${{ inputs.from_date }}
+      BT_TO_DATE: ${{ inputs.to_date }}
+      BT_DEPOSIT: ${{ inputs.deposit }}
+      BT_LEVERAGE: ${{ inputs.leverage }}
+      BT_MODEL: ${{ inputs.model }}
+      BT_SYNC_MINUTES: ${{ inputs.sync_minutes }}
+      BT_TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
+      MT5_LOGIN: ${{ secrets.MT5_LOGIN }}
+      MT5_PASSWORD: ${{ secrets.MT5_PASSWORD }}
+      MT5_SERVER: ${{ secrets.MT5_SERVER }}
 
     steps:
       - name: Checkout repository
