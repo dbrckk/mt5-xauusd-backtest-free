@@ -63,6 +63,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Patch public-history runner
+        shell: pwsh
+        run: ./scripts/patch-public-runner-on-ci.ps1
+
       - name: Download public XAU history, import custom symbol, run MT5 Strategy Tester
         shell: pwsh
         run: ./scripts/run-public-history-backtest.ps1
