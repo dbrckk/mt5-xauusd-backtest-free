@@ -77,6 +77,7 @@ jobs:
         run: |
           $p = "scripts/run-public-history-backtest.ps1"
           $txt = Get-Content -Path $p -Raw
+          $txt = $txt.Replace('AllowLiveTrading=0', 'AllowLiveTrading=1')
           $txt = $txt.Replace('input double InpMinScoreToEnter = 20.0;', 'input double InpMinScoreToEnter = 0.0;')
           $txt = $txt.Replace('input double InpMinScoreGap = 0.0;', 'input double InpMinScoreGap = -1.0;')
           $txt = $txt.Replace('input double InpV14MinEntryScore = 20.0;', 'input double InpV14MinEntryScore = 0.0;')
@@ -88,6 +89,7 @@ jobs:
           $txt = $txt.Replace('"InpMaxNewEntriesPerDay=80"', '"InpMaxNewEntriesPerDay=500"')
           Set-Content -Path $p -Value $txt -Encoding UTF8
           Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "force_entry_diagnostics=true"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "allow_live_trading_for_tester=true"
 
       - name: Patch XAU_PUBLIC base-filter and zero-signal fallback
         shell: pwsh
