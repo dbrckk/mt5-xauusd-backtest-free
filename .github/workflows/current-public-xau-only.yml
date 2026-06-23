@@ -85,11 +85,12 @@ jobs:
           Set-Content -Path $p -Value $txt -Encoding UTF8
           Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "force_entry_diagnostics=true"
 
-      - name: Patch XAU_PUBLIC zero-signal fallback
+      - name: Patch XAU_PUBLIC base-filter and zero-signal fallback
         shell: pwsh
         run: |
           $ea = "MQL5/Experts/QuantumQueenStyle_XAU_Grid_PRO_V17_10K_PROFITASYMMETRY.mq5"
           $txt = Get-Content -Path $ea -Raw
+          $txt = $txt.Replace('if(!BaseFiltersOK(sig)) return;', 'if(!BaseFiltersOK(sig)) { if(!(_Symbol == "XAU_PUBLIC" || InpTradeSymbol == "XAU_PUBLIC")) return; g_status = "PUBLIC_DIAG_FILTER_BYPASS"; DecisionLog(g_status); }')
           $old = @'
 if(sig.direction == 0)
 
@@ -114,9 +115,15 @@ if(_Symbol == "XAU_PUBLIC" || InpTradeSymbol == "XAU_PUBLIC")
 
 sig.direction = (sig.buyScore >= sig.sellScore ? 1 : -1);
 
+sig.buyScore = (sig.direction == 1 ? 100.0 : sig.buyScore);
+
+sig.sellScore = (sig.direction == -1 ? 100.0 : sig.sellScore);
+
+sig.scoreGap = 100.0;
+
 g_status = "PUBLIC_DIAG_FORCED_SIGNAL";
 
-DecisionLog(g_status + " dir=" + IntegerToString(sig.direction) + " buy=" + DoubleToString(sig.buyScore, 1) + " sell=" + DoubleToString(sig.sellScore, 1));
+DecisionLog(g_status + " dir=" + IntegerToString(sig.direction));
 
 }
 
@@ -137,7 +144,7 @@ return;
           if (-not $txt.Contains($old)) { throw "OnTick zero-signal block not found" }
           $txt = $txt.Replace($old, $new)
           Set-Content -Path $ea -Value $txt -Encoding UTF8
-          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "public_zero_signal_fallback=patched"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "public_filter_and_zero_signal_fallback=patched"
 
       - name: Run current public XAU backtest
         shell: pwsh
