@@ -85,6 +85,60 @@ jobs:
           Set-Content -Path $p -Value $txt -Encoding UTF8
           Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "force_entry_diagnostics=true"
 
+      - name: Patch XAU_PUBLIC zero-signal fallback
+        shell: pwsh
+        run: |
+          $ea = "MQL5/Experts/QuantumQueenStyle_XAU_Grid_PRO_V17_10K_PROFITASYMMETRY.mq5"
+          $txt = Get-Content -Path $ea -Raw
+          $old = @'
+if(sig.direction == 0)
+
+{
+
+g_status = "NO_SIGNAL";
+
+DecisionLog(g_status + " buy=" + DoubleToString(sig.buyScore, 1) + " sell=" + DoubleToString(sig.sellScore, 1));
+
+return;
+
+}
+'@
+          $new = @'
+if(sig.direction == 0)
+
+{
+
+if(_Symbol == "XAU_PUBLIC" || InpTradeSymbol == "XAU_PUBLIC")
+
+{
+
+sig.direction = (sig.buyScore >= sig.sellScore ? 1 : -1);
+
+g_status = "PUBLIC_DIAG_FORCED_SIGNAL";
+
+DecisionLog(g_status + " dir=" + IntegerToString(sig.direction) + " buy=" + DoubleToString(sig.buyScore, 1) + " sell=" + DoubleToString(sig.sellScore, 1));
+
+}
+
+else
+
+{
+
+g_status = "NO_SIGNAL";
+
+DecisionLog(g_status + " buy=" + DoubleToString(sig.buyScore, 1) + " sell=" + DoubleToString(sig.sellScore, 1));
+
+return;
+
+}
+
+}
+'@
+          if (-not $txt.Contains($old)) { throw "OnTick zero-signal block not found" }
+          $txt = $txt.Replace($old, $new)
+          Set-Content -Path $ea -Value $txt -Encoding UTF8
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "public_zero_signal_fallback=patched"
+
       - name: Run current public XAU backtest
         shell: pwsh
         run: ./scripts/run-public-history-backtest.ps1
