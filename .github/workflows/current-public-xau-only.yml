@@ -67,6 +67,10 @@ jobs:
           if (Test-Path reports) { Remove-Item reports -Recurse -Force }
           New-Item -ItemType Directory -Force -Path reports | Out-Null
           Set-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "CURRENT_PUBLIC_XAU_ONLY"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "workflow=current-public-xau-only.yml"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "run_number=${{ github.run_number }}"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "sha=${{ github.sha }}"
+          Get-ChildItem .github/workflows -File | Select-Object Name,Length | Format-Table -AutoSize | Out-String | Set-Content -Path reports/WORKFLOWS_PRESENT.txt -Encoding UTF8
 
       - name: Force public entry diagnostics
         shell: pwsh
@@ -90,6 +94,7 @@ jobs:
         run: |
           $ea = "MQL5/Experts/QuantumQueenStyle_XAU_Grid_PRO_V17_10K_PROFITASYMMETRY.mq5"
           $txt = Get-Content -Path $ea -Raw
+          $before = $txt
           $txt = $txt.Replace('if(!BaseFiltersOK(sig)) return;', 'if(!BaseFiltersOK(sig)) { if(!(_Symbol == "XAU_PUBLIC" || InpTradeSymbol == "XAU_PUBLIC")) return; g_status = "PUBLIC_DIAG_FILTER_BYPASS"; DecisionLog(g_status); }')
           $old = @'
 if(sig.direction == 0)
@@ -143,12 +148,25 @@ return;
 '@
           if (-not $txt.Contains($old)) { throw "OnTick zero-signal block not found" }
           $txt = $txt.Replace($old, $new)
+          if ($txt -eq $before) { throw "XAU_PUBLIC patch changed nothing" }
+          if ($txt -notmatch "PUBLIC_DIAG_FILTER_BYPASS") { throw "Base-filter bypass patch missing" }
+          if ($txt -notmatch "PUBLIC_DIAG_FORCED_SIGNAL") { throw "Forced signal patch missing" }
           Set-Content -Path $ea -Value $txt -Encoding UTF8
           Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "public_filter_and_zero_signal_fallback=patched"
 
       - name: Run current public XAU backtest
         shell: pwsh
         run: ./scripts/run-public-history-backtest.ps1
+
+      - name: Reject legacy pipeline artifacts
+        if: always()
+        shell: pwsh
+        run: |
+          $legacy = @("reports/prefetch_history.log", "reports/QQ_MT5_PreLogin_GHA.ini", "reports/QQ_MT5_Backtest_GHA.ini")
+          foreach ($f in $legacy) {
+            if (Test-Path $f) { throw "Legacy artifact file detected: $f" }
+          }
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "legacy_artifact_check=passed"
 
       - name: Upload current public XAU artifact
         if: always()
