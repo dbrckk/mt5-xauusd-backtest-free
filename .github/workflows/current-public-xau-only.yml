@@ -60,15 +60,35 @@ jobs:
       MT5_SERVER: ${{ secrets.MT5_SERVER }}
     steps:
       - uses: actions/checkout@v4
+
       - name: Clean report folder
         shell: pwsh
         run: |
           if (Test-Path reports) { Remove-Item reports -Recurse -Force }
           New-Item -ItemType Directory -Force -Path reports | Out-Null
           Set-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "CURRENT_PUBLIC_XAU_ONLY"
+
+      - name: Force public entry diagnostics
+        shell: pwsh
+        run: |
+          $p = "scripts/run-public-history-backtest.ps1"
+          $txt = Get-Content -Path $p -Raw
+          $txt = $txt.Replace('input double InpMinScoreToEnter = 20.0;', 'input double InpMinScoreToEnter = 0.0;')
+          $txt = $txt.Replace('input double InpMinScoreGap = 0.0;', 'input double InpMinScoreGap = -1.0;')
+          $txt = $txt.Replace('input double InpV14MinEntryScore = 20.0;', 'input double InpV14MinEntryScore = 0.0;')
+          $txt = $txt.Replace('input double InpV14MinEntryGap = 0.0;', 'input double InpV14MinEntryGap = -1.0;')
+          $txt = $txt.Replace('"InpMinScoreToEnter=20.0"', '"InpMinScoreToEnter=0.0"')
+          $txt = $txt.Replace('"InpMinScoreGap=0.0"', '"InpMinScoreGap=-1.0"')
+          $txt = $txt.Replace('"InpV14MinEntryScore=20.0"', '"InpV14MinEntryScore=0.0"')
+          $txt = $txt.Replace('"InpV14MinEntryGap=0.0"', '"InpV14MinEntryGap=-1.0"')
+          $txt = $txt.Replace('"InpMaxNewEntriesPerDay=80"', '"InpMaxNewEntriesPerDay=500"')
+          Set-Content -Path $p -Value $txt -Encoding UTF8
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "force_entry_diagnostics=true"
+
       - name: Run current public XAU backtest
         shell: pwsh
         run: ./scripts/run-public-history-backtest.ps1
+
       - name: Upload current public XAU artifact
         if: always()
         uses: actions/upload-artifact@v4
