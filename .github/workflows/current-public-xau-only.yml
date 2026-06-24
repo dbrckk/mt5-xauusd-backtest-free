@@ -2,9 +2,101 @@ name: CURRENT PUBLIC XAU ONLY
 
 on:
   workflow_dispatch:
+    inputs:
+      period:
+        description: "MT5 timeframe"
+        required: true
+        default: "M15"
+        type: string
+      from_date:
+        description: "Backtest start date YYYY.MM.DD"
+        required: true
+        default: "2026.06.01"
+        type: string
+      to_date:
+        description: "Backtest end date YYYY.MM.DD"
+        required: true
+        default: "2026.06.20"
+        type: string
+      deposit:
+        description: "Initial deposit"
+        required: true
+        default: "10000"
+        type: string
+      leverage:
+        description: "Leverage"
+        required: true
+        default: "1:100"
+        type: string
+      model:
+        description: "0=Every tick"
+        required: true
+        default: "0"
+        type: string
+      timeout_minutes:
+        description: "Timeout minutes"
+        required: true
+        default: "180"
+        type: string
+
+permissions:
+  contents: read
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  xau-public:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    env:
+      BT_SYMBOL: XAU_PUBLIC
+      BT_PERIOD: ${{ inputs.period }}
+      BT_FROM_DATE: ${{ inputs.from_date }}
+      BT_TO_DATE: ${{ inputs.to_date }}
+      BT_DEPOSIT: ${{ inputs.deposit }}
+      BT_LEVERAGE: ${{ inputs.leverage }}
+      BT_MODEL: ${{ inputs.model }}
+      BT_TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
+      MT5_LOGIN: ${{ secrets.MT5_LOGIN }}
+      MT5_PASSWORD: ${{ secrets.MT5_PASSWORD }}
+      MT5_SERVER: ${{ secrets.MT5_SERVER }}
+
     steps:
-      - run: echo ok
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare reports
+        shell: pwsh
+        run: |
+          if (Test-Path reports) { Remove-Item reports -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path reports | Out-Null
+          Set-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "CURRENT_PUBLIC_XAU_ONLY"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "workflow=current-public-xau-only.yml"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "run_number=${{ github.run_number }}"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "sha=${{ github.sha }}"
+
+      - name: Apply public diagnostic patch
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/apply-public-diagnostic-patch.ps1
+
+      - name: Run public XAU backtest
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-public-history-backtest.ps1
+
+      - name: Reject legacy pipeline artifacts
+        if: always()
+        shell: pwsh
+        run: |
+          $legacy = @("reports/prefetch_history.log", "reports/QQ_MT5_PreLogin_GHA.ini", "reports/QQ_MT5_Backtest_GHA.ini")
+          foreach ($f in $legacy) {
+            if (Test-Path $f) { throw "Legacy artifact file detected: $f" }
+          }
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "legacy_artifact_check=passed"
+
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: CURRENT-PUBLIC-XAU-ONLY
+          path: reports/**
+          if-no-files-found: error
+          retention-days: 14
