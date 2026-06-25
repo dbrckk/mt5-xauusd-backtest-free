@@ -82,6 +82,13 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-public-history-backtest.ps1
 
+      - name: Analyze public artifact
+        if: always()
+        shell: pwsh
+        run: |
+          Compress-Archive -Path reports/* -DestinationPath reports/_analysis_input.zip -Force
+          python scripts/analyze-public-artifact.py reports/_analysis_input.zip | Tee-Object -FilePath reports/PUBLIC_BACKTEST_ANALYSIS.json
+
       - name: Reject legacy pipeline artifacts
         if: always()
         shell: pwsh
