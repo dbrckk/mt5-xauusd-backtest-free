@@ -13,6 +13,7 @@ from collections import OrderedDict
 BASE_URL = "https://datafeed.dukascopy.com/datafeed"
 INSTRUMENT = "XAUUSD"
 SCALE = 1000.0
+MAX_PUBLIC_SPREAD_POINTS = 120
 
 
 def parse_ymd(value: str) -> dt.date:
@@ -57,6 +58,7 @@ def decompress_bi5(data: bytes) -> bytes | None:
 
 def update_bar(bars: OrderedDict, minute: dt.datetime, price: float, spread_points: int):
     key = minute.strftime("%Y.%m.%d %H:%M")
+    spread_points = max(1, min(MAX_PUBLIC_SPREAD_POINTS, int(spread_points)))
     if key not in bars:
         bars[key] = [price, price, price, price, 0, spread_points, 0]
     bar = bars[key]
@@ -65,13 +67,12 @@ def update_bar(bars: OrderedDict, minute: dt.datetime, price: float, spread_poin
     bar[3] = price
     bar[4] += 1
     if spread_points > 0:
-        bar[5] = spread_points
+        bar[5] = min(bar[5], spread_points)
 
 
 def download_day(day: dt.date, bars: OrderedDict):
     day_count = 0
     for hour in range(24):
-        # Dukascopy month path is zero-based: January = 00.
         url = f"{BASE_URL}/{INSTRUMENT}/{day.year}/{day.month - 1:02d}/{day.day:02d}/{hour:02d}h_ticks.bi5"
         raw = fetch(url)
         if not raw:
@@ -116,7 +117,7 @@ def fill_missing_minutes(bars: OrderedDict):
             filled[key] = bars[key]
             last_close = bars[key][3]
         elif last_close is not None:
-            filled[key] = [last_close, last_close, last_close, last_close, 1, 30, 0]
+            filled[key] = [last_close, last_close, last_close, last_close, 1, min(30, MAX_PUBLIC_SPREAD_POINTS), 0]
         current += dt.timedelta(minutes=1)
     return filled
 
@@ -146,6 +147,7 @@ def main():
     print(f"PUBLIC_HISTORY_CSV={out_csv}")
     print(f"PUBLIC_HISTORY_TICKS={total_ticks}")
     print(f"PUBLIC_HISTORY_BARS={len(bars)}")
+    print(f"PUBLIC_HISTORY_MAX_SPREAD_POINTS={MAX_PUBLIC_SPREAD_POINTS}")
     if len(bars) < 100:
         print("NOT_ENOUGH_PUBLIC_HISTORY")
         return 20
