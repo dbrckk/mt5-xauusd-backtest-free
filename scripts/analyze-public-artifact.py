@@ -25,6 +25,7 @@ ERROR_PATTERNS = [
     "Invalid price",
     "failed instant buy",
     "failed instant sell",
+    "failed modify",
 ]
 
 REQUIRED_MARKERS = [
@@ -45,6 +46,9 @@ REQUIRED_SET_VALUES = [
     "InpCloseOnRunnerExhaustion=false",
     "InpUseFastLoserCut=false",
     "InpUseEarlyBadTradeAbort=false",
+    "InpUseBreakEven=false",
+    "InpUseTrailing=false",
+    "InpUseBasketNetBreakEvenLock=false",
 ]
 
 
@@ -108,6 +112,8 @@ def main() -> int:
 
     deal_count = len(re.findall(r"\bdeal #\d+\b", blob))
     failed_orders = sum(errors.get(k, 0) for k in ("failed instant buy", "failed instant sell"))
+    failed_modify = errors.get("failed modify", 0)
+    invalid_stops = errors.get("Invalid stops", 0)
 
     verdict = "UNKNOWN"
     reasons: list[str] = []
@@ -121,9 +127,9 @@ def main() -> int:
     elif not entries and deal_count == 0:
         verdict = "NO_TRADES"
         reasons.append("No entry or deal markers found.")
-    elif failed_orders > 50:
+    elif failed_orders > 50 or failed_modify > 50 or invalid_stops > 50:
         verdict = "EXECUTION_NOISE_TOO_HIGH"
-        reasons.append(f"Too many failed order attempts: {failed_orders}.")
+        reasons.append(f"Execution noise too high: failed_orders={failed_orders}, failed_modify={failed_modify}, invalid_stops={invalid_stops}.")
     elif exits:
         verdict = "EXITS_TOO_AGGRESSIVE"
         reasons.append("Exit markers found: " + ", ".join(f"{k}={v}" for k, v in exits.items()))
@@ -139,6 +145,8 @@ def main() -> int:
         "final_balance": balance,
         "deal_count": deal_count,
         "failed_orders": failed_orders,
+        "failed_modify": failed_modify,
+        "invalid_stops": invalid_stops,
         "entries": entries,
         "exits": exits,
         "errors": errors,
