@@ -13,7 +13,7 @@ from collections import OrderedDict
 BASE_URL = "https://datafeed.dukascopy.com/datafeed"
 INSTRUMENT = "XAUUSD"
 SCALE = 1000.0
-MAX_PUBLIC_SPREAD_POINTS = 120
+MAX_PUBLIC_SPREAD_POINTS = 80
 
 
 def parse_ymd(value: str) -> dt.date:
