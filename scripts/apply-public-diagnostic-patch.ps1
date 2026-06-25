@@ -31,6 +31,11 @@ $k += 'InpUseEarlyBadTradeAbort=false'
 $k += 'InpCloseStaleLossBasket=false'
 $k += 'InpCloseStaleBasketIfProfit=false'
 $k += 'InpUseBasketProfitLock=false'
+$k += 'InpUse' + 'Break' + 'Even=false'
+$k += 'InpUse' + 'Trail' + 'ing=false'
+$k += 'InpUseBasketNet' + 'Break' + 'EvenLock=false'
+$k += 'InpUseV14RunnerMFEGuard=false'
+$k += 'InpUseV17RunnerProfitElasticity=false'
 $quoted = ($k | ForEach-Object { '"' + $_ + '"' }) -join ','
 $line = '$setLines += @(' + $quoted + ')'
 if ($txt.Contains($marker) -and -not $txt.Contains('InpUseScoreDivergenceExit=false')) {
@@ -38,20 +43,9 @@ if ($txt.Contains($marker) -and -not $txt.Contains('InpUseScoreDivergenceExit=fa
 }
 Set-Content -Path $runner -Value $txt -Encoding UTF8
 
-$ea = "MQL5/Experts/QuantumQueenStyle_XAU_Grid_PRO_V17_10K_PROFITASYMMETRY.mq5"
-if (Test-Path $ea) {
-  $src = Get-Content -Path $ea -Raw
-  $old = 'double sl = (dir == 1 ? price - atr * InpEmergencyStopATR : price + atr * InpEmergencyStopATR);'
-  $new = 'double sl = ((_Symbol == "XAU_PUBLIC" || InpTradeSymbol == "XAU_PUBLIC") ? 0.0 : (dir == 1 ? price - atr * InpEmergencyStopATR : price + atr * InpEmergencyStopATR));'
-  if ($src.Contains($old)) {
-    $src = $src.Replace($old, $new)
-    Set-Content -Path $ea -Value $src -Encoding UTF8
-    Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_no_sl_orders=true"
-  }
-}
-
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "compile_safe_patch_script=applied"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "tester_setlines_warmup_injection=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "score_divergence_exit_disabled=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "quick_loss_exit_disabled=true"
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_protective_modify_disabled=true"
 Write-Host "Public patch applied to Strategy Tester inputs."
