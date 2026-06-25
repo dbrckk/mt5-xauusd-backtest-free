@@ -20,6 +20,13 @@ ENTRY_PATTERNS = [
     "OPEN_ENTRY",
 ]
 
+ERROR_PATTERNS = [
+    "Invalid stops",
+    "Invalid price",
+    "failed instant buy",
+    "failed instant sell",
+]
+
 REQUIRED_MARKERS = [
     "CURRENT_PUBLIC_XAU_ONLY",
     "compile_safe_patch_script=applied",
@@ -36,7 +43,24 @@ REQUIRED_SET_VALUES = [
     "InpUseScoreDivergenceExit=false",
     "InpUseSignalDecayExit=false",
     "InpCloseOnRunnerExhaustion=false",
+    "InpUseFastLoserCut=false",
+    "InpUseEarlyBadTradeAbort=false",
 ]
+
+
+def decode_text(data: bytes) -> str:
+    candidates = []
+    for enc in ("utf-8", "utf-16", "utf-16le", "latin1"):
+        try:
+            txt = data.decode(enc, errors="replace")
+            nul_count = txt[:2000].count("\x00")
+            candidates.append((nul_count, -len(txt), txt))
+        except Exception:
+            continue
+    if not candidates:
+        return data.decode("utf-8", errors="replace")
+    candidates.sort(key=lambda x: (x[0], x[1]))
+    return candidates[0][2]
 
 
 def read_zip_texts(path: Path) -> dict[str, str]:
@@ -44,11 +68,8 @@ def read_zip_texts(path: Path) -> dict[str, str]:
     with zipfile.ZipFile(path) as z:
         for name in z.namelist():
             lower = name.lower()
-            if lower.endswith((".txt", ".log", ".ini", ".set", ".csv", ".html", ".htm")):
-                try:
-                    out[name] = z.read(name).decode("utf-8", errors="replace")
-                except Exception:
-                    out[name] = z.read(name).decode("utf-16", errors="replace")
+            if lower.endswith((".txt", ".log", ".ini", ".set", ".csv", ".html", ".htm", ".json")):
+                out[name] = decode_text(z.read(name))
     return out
 
 
@@ -82,7 +103,11 @@ def main() -> int:
     set_status = {m: (m in blob) for m in REQUIRED_SET_VALUES}
     exits = count_hits(blob, EXIT_PATTERNS)
     entries = count_hits(blob, ENTRY_PATTERNS)
+    errors = count_hits(blob, ERROR_PATTERNS)
     balance = find_final_balance(blob)
+
+    deal_count = len(re.findall(r"\bdeal #\d+\b", blob))
+    failed_orders = sum(errors.get(k, 0) for k in ("failed instant buy", "failed instant sell"))
 
     verdict = "UNKNOWN"
     reasons: list[str] = []
@@ -93,9 +118,12 @@ def main() -> int:
     elif not all(set_status.values()):
         verdict = "SET_NOT_PATCHED"
         reasons.append("Required Strategy Tester inputs are missing from the artifact.")
-    elif not entries:
+    elif not entries and deal_count == 0:
         verdict = "NO_TRADES"
-        reasons.append("No entry markers found.")
+        reasons.append("No entry or deal markers found.")
+    elif failed_orders > 50:
+        verdict = "EXECUTION_NOISE_TOO_HIGH"
+        reasons.append(f"Too many failed order attempts: {failed_orders}.")
     elif exits:
         verdict = "EXITS_TOO_AGGRESSIVE"
         reasons.append("Exit markers found: " + ", ".join(f"{k}={v}" for k, v in exits.items()))
@@ -109,8 +137,11 @@ def main() -> int:
     result = {
         "verdict": verdict,
         "final_balance": balance,
+        "deal_count": deal_count,
+        "failed_orders": failed_orders,
         "entries": entries,
         "exits": exits,
+        "errors": errors,
         "markers": marker_status,
         "tester_inputs": set_status,
         "reasons": reasons,
