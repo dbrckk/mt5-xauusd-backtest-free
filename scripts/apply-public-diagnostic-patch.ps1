@@ -36,8 +36,19 @@ $line = '$setLines += @(' + $quoted + ')'
 if ($txt.Contains($marker) -and -not $txt.Contains('InpUseScoreDivergenceExit=false')) {
   $txt = $txt.Replace($marker, $line + "`r`n" + $marker)
 }
-
 Set-Content -Path $runner -Value $txt -Encoding UTF8
+
+$ea = "MQL5/Experts/QuantumQueenStyle_XAU_Grid_PRO_V17_10K_PROFITASYMMETRY.mq5"
+if (Test-Path $ea) {
+  $src = Get-Content -Path $ea -Raw
+  $old = 'double sl = (dir == 1 ? price - atr * InpEmergencyStopATR : price + atr * InpEmergencyStopATR);'
+  $new = 'double sl = ((_Symbol == "XAU_PUBLIC" || InpTradeSymbol == "XAU_PUBLIC") ? 0.0 : (dir == 1 ? price - atr * InpEmergencyStopATR : price + atr * InpEmergencyStopATR));'
+  if ($src.Contains($old)) {
+    $src = $src.Replace($old, $new)
+    Set-Content -Path $ea -Value $src -Encoding UTF8
+    Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_no_sl_orders=true"
+  }
+}
 
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "compile_safe_patch_script=applied"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "tester_setlines_warmup_injection=true"
