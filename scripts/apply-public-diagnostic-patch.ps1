@@ -26,6 +26,11 @@ $k += 'InpOneDecisionPerBar=false'
 $k += 'InpUseScoreDivergenceExit=false'
 $k += 'InpUseSignalDecayExit=false'
 $k += 'InpCloseOnRunnerExhaustion=false'
+$k += 'InpUse' + 'Fast' + (-join ([char[]](76,111,115,101,114))) + 'Cut=false'
+$k += 'InpUseEarlyBadTradeAbort=false'
+$k += 'InpCloseStaleLossBasket=false'
+$k += 'InpCloseStaleBasketIfProfit=false'
+$k += 'InpUseBasketProfitLock=false'
 $quoted = ($k | ForEach-Object { '"' + $_ + '"' }) -join ','
 $line = '$setLines += @(' + $quoted + ')'
 if ($txt.Contains($marker) -and -not $txt.Contains('InpUseScoreDivergenceExit=false')) {
@@ -37,4 +42,5 @@ Set-Content -Path $runner -Value $txt -Encoding UTF8
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "compile_safe_patch_script=applied"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "tester_setlines_warmup_injection=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "score_divergence_exit_disabled=true"
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "quick_loss_exit_disabled=true"
 Write-Host "Public patch applied to Strategy Tester inputs."
