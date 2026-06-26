@@ -78,6 +78,10 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/apply-public-diagnostic-patch.ps1
 
+      - name: Force public set overrides
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/apply-public-set-overrides.ps1
+
       - name: Run public XAU backtest
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-public-history-backtest.ps1
