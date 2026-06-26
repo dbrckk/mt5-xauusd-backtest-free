@@ -84,7 +84,11 @@ jobs:
 
       - name: Run public XAU backtest
         shell: pwsh
-        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-public-history-backtest.ps1
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-public-history-backtest.ps1 2>&1 | Tee-Object -FilePath reports/run_public_backtest_step.log
+          $code = $LASTEXITCODE
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "run_public_backtest_exit_code=$code"
+          if ($code -ne 0) { exit $code }
 
       - name: Analyze public artifact
         if: always()
