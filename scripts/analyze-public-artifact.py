@@ -32,6 +32,7 @@ REQUIRED_MARKERS = [
     "CURRENT_PUBLIC_XAU_ONLY",
     "compile_safe_patch_script=applied",
     "tester_setlines_warmup_injection=true",
+    "public_no_sl_orders=true",
 ]
 
 REQUIRED_SET_VALUES = [
@@ -120,10 +121,12 @@ def main() -> int:
 
     if not all(marker_status.values()):
         verdict = "STALE_OR_WRONG_ARTIFACT"
-        reasons.append("Required workflow markers are missing.")
+        missing = [k for k, v in marker_status.items() if not v]
+        reasons.append("Required workflow markers are missing: " + ", ".join(missing))
     elif not all(set_status.values()):
         verdict = "SET_NOT_PATCHED"
-        reasons.append("Required Strategy Tester inputs are missing from the artifact.")
+        missing = [k for k, v in set_status.items() if not v]
+        reasons.append("Required Strategy Tester inputs are missing: " + ", ".join(missing))
     elif not entries and deal_count == 0:
         verdict = "NO_TRADES"
         reasons.append("No entry or deal markers found.")
