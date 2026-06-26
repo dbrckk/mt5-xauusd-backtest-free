@@ -9,11 +9,12 @@ if (!(Test-Path $runner)) { throw "Runner not found: $runner" }
 
 $txt = Get-Content -Path $runner -Raw
 $txt = $txt.Replace('AllowLiveTrading=0', 'AllowLiveTrading=1')
-$txt = $txt.Replace('"InpMinScoreToEnter=20.0"', '"InpMinScoreToEnter=0.0"')
-$txt = $txt.Replace('"InpMinScoreGap=0.0"', '"InpMinScoreGap=-1.0"')
-$txt = $txt.Replace('"InpV14MinEntryScore=20.0"', '"InpV14MinEntryScore=0.0"')
-$txt = $txt.Replace('"InpV14MinEntryGap=0.0"', '"InpV14MinEntryGap=-1.0"')
-$txt = $txt.Replace('"InpMaxNewEntriesPerDay=80"', '"InpMaxNewEntriesPerDay=500"')
+$txt = $txt.Replace('"InpMinScoreToEnter=20.0"', '"InpMinScoreToEnter=70.0"')
+$txt = $txt.Replace('"InpMinScoreGap=0.0"', '"InpMinScoreGap=30.0"')
+$txt = $txt.Replace('"InpV14MinEntryScore=20.0"', '"InpV14MinEntryScore=70.0"')
+$txt = $txt.Replace('"InpV14MinEntryGap=0.0"', '"InpV14MinEntryGap=30.0"')
+$txt = $txt.Replace('"InpMaxNewEntriesPerDay=80"', '"InpMaxNewEntriesPerDay=1"')
+$txt = $txt.Replace('"InpMaxNewEntriesPerDay=500"', '"InpMaxNewEntriesPerDay=1"')
 
 $marker = 'Set-Content -Path $setPath -Value $setLines -Encoding ASCII'
 $k = @()
@@ -23,6 +24,11 @@ $k += 'InpSlowEMA=34'
 $k += 'InpMacroEMA=34'
 $k += 'InpSignalEMA=20'
 $k += 'InpOneDecisionPerBar=false'
+$k += 'InpMinScoreToEnter=70.0'
+$k += 'InpMinScoreGap=30.0'
+$k += 'InpV14MinEntryScore=70.0'
+$k += 'InpV14MinEntryGap=30.0'
+$k += 'InpMaxNewEntriesPerDay=1'
 $k += 'InpUseScoreDivergenceExit=false'
 $k += 'InpUseSignalDecayExit=false'
 $k += 'InpCloseOnRunnerExhaustion=false'
@@ -38,7 +44,7 @@ $k += 'InpUseV14RunnerMFEGuard=false'
 $k += 'InpUseV17RunnerProfitElasticity=false'
 $quoted = ($k | ForEach-Object { '"' + $_ + '"' }) -join ','
 $line = '$setLines += @(' + $quoted + ')'
-if ($txt.Contains($marker) -and -not $txt.Contains('InpUseScoreDivergenceExit=false')) {
+if ($txt.Contains($marker) -and -not $txt.Contains('InpMaxNewEntriesPerDay=1')) {
   $txt = $txt.Replace($marker, $line + "`r`n" + $marker)
 }
 Set-Content -Path $runner -Value $txt -Encoding UTF8
@@ -60,4 +66,5 @@ Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "tes
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "score_divergence_exit_disabled=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "quick_loss_exit_disabled=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_protective_modify_disabled=true"
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_overtrade_guard=true"
 Write-Host "Public patch applied to Strategy Tester inputs."
