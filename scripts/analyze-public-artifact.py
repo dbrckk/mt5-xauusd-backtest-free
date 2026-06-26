@@ -34,6 +34,7 @@ REQUIRED_MARKERS = [
     "tester_setlines_warmup_injection=true",
     "public_no_sl_orders=true",
     "public_overtrade_guard=true",
+    "public_setline_injection_fixed=true",
 ]
 
 REQUIRED_SET_VALUES = [
@@ -47,6 +48,7 @@ REQUIRED_SET_VALUES = [
     "InpMinScoreGap=30.0",
     "InpV14MinEntryScore=70.0",
     "InpV14MinEntryGap=30.0",
+    "InpMinMinutesBetweenEntries=360",
     "InpMaxNewEntriesPerDay=1",
     "InpUseScoreDivergenceExit=false",
     "InpUseSignalDecayExit=false",
