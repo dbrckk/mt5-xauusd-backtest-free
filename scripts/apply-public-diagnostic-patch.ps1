@@ -15,6 +15,7 @@ $txt = $txt.Replace('"InpV14MinEntryScore=20.0"', '"InpV14MinEntryScore=70.0"')
 $txt = $txt.Replace('"InpV14MinEntryGap=0.0"', '"InpV14MinEntryGap=30.0"')
 $txt = $txt.Replace('"InpMaxNewEntriesPerDay=80"', '"InpMaxNewEntriesPerDay=1"')
 $txt = $txt.Replace('"InpMaxNewEntriesPerDay=500"', '"InpMaxNewEntriesPerDay=1"')
+$txt = $txt.Replace('"InpMinMinutesBetweenEntries=0"', '"InpMinMinutesBetweenEntries=360"')
 
 $marker = 'Set-Content -Path $setPath -Value $setLines -Encoding ASCII'
 $k = @()
@@ -28,6 +29,7 @@ $k += 'InpMinScoreToEnter=70.0'
 $k += 'InpMinScoreGap=30.0'
 $k += 'InpV14MinEntryScore=70.0'
 $k += 'InpV14MinEntryGap=30.0'
+$k += 'InpMinMinutesBetweenEntries=360'
 $k += 'InpMaxNewEntriesPerDay=1'
 $k += 'InpUseScoreDivergenceExit=false'
 $k += 'InpUseSignalDecayExit=false'
@@ -44,7 +46,7 @@ $k += 'InpUseV14RunnerMFEGuard=false'
 $k += 'InpUseV17RunnerProfitElasticity=false'
 $quoted = ($k | ForEach-Object { '"' + $_ + '"' }) -join ','
 $line = '$setLines += @(' + $quoted + ')'
-if ($txt.Contains($marker) -and -not $txt.Contains('InpMaxNewEntriesPerDay=1')) {
+if ($txt.Contains($marker) -and -not $txt.Contains('InpMacroTF=16385')) {
   $txt = $txt.Replace($marker, $line + "`r`n" + $marker)
 }
 Set-Content -Path $runner -Value $txt -Encoding UTF8
@@ -67,4 +69,5 @@ Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "sco
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "quick_loss_exit_disabled=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_protective_modify_disabled=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_overtrade_guard=true"
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_setline_injection_fixed=true"
 Write-Host "Public patch applied to Strategy Tester inputs."
