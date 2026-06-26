@@ -33,6 +33,7 @@ REQUIRED_MARKERS = [
     "compile_safe_patch_script=applied",
     "tester_setlines_warmup_injection=true",
     "public_no_sl_orders=true",
+    "public_overtrade_guard=true",
 ]
 
 REQUIRED_SET_VALUES = [
@@ -42,6 +43,11 @@ REQUIRED_SET_VALUES = [
     "InpMacroEMA=34",
     "InpSignalEMA=20",
     "InpOneDecisionPerBar=false",
+    "InpMinScoreToEnter=70.0",
+    "InpMinScoreGap=30.0",
+    "InpV14MinEntryScore=70.0",
+    "InpV14MinEntryGap=30.0",
+    "InpMaxNewEntriesPerDay=1",
     "InpUseScoreDivergenceExit=false",
     "InpUseSignalDecayExit=false",
     "InpCloseOnRunnerExhaustion=false",
@@ -115,6 +121,7 @@ def main() -> int:
     failed_orders = sum(errors.get(k, 0) for k in ("failed instant buy", "failed instant sell"))
     failed_modify = errors.get("failed modify", 0)
     invalid_stops = errors.get("Invalid stops", 0)
+    open_entries = entries.get("OPEN_ENTRY", 0)
 
     verdict = "UNKNOWN"
     reasons: list[str] = []
@@ -130,6 +137,9 @@ def main() -> int:
     elif not entries and deal_count == 0:
         verdict = "NO_TRADES"
         reasons.append("No entry or deal markers found.")
+    elif open_entries > 2:
+        verdict = "OVERTRADING"
+        reasons.append(f"Too many entries for public validation: {open_entries}.")
     elif failed_orders > 50 or failed_modify > 50 or invalid_stops > 50:
         verdict = "EXECUTION_NOISE_TOO_HIGH"
         reasons.append(f"Execution noise too high: failed_orders={failed_orders}, failed_modify={failed_modify}, invalid_stops={invalid_stops}.")
@@ -150,6 +160,7 @@ def main() -> int:
         "failed_orders": failed_orders,
         "failed_modify": failed_modify,
         "invalid_stops": invalid_stops,
+        "open_entries": open_entries,
         "entries": entries,
         "exits": exits,
         "errors": errors,
