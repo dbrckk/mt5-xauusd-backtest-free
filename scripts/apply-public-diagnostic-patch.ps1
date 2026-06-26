@@ -58,9 +58,15 @@ if (Test-Path $ea) {
   $new = 'double sl = ((_Symbol == "XAU_PUBLIC" || InpTradeSymbol == "XAU_PUBLIC") ? 0.0 : (dir == 1 ? price - atr * InpEmergencyStopATR : price + atr * InpEmergencyStopATR));'
   if ($src.Contains($old)) {
     $src = $src.Replace($old, $new)
-    Set-Content -Path $ea -Value $src -Encoding UTF8
     Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_no_sl_orders=true"
   }
+  $openOld = 'DecisionLog("OPEN " + (sig.direction == 1 ? "BUY" : "SELL") + " buyScore=" + DoubleToString(sig.buyScore, 1) + " sellScore=" + DoubleToString(sig.sellScore, 1));'
+  $openNew = 'DecisionLog("OPEN " + (sig.direction == 1 ? "BUY" : "SELL") + " buyScore=" + DoubleToString(sig.buyScore, 1) + " sellScore=" + DoubleToString(sig.sellScore, 1) + " adx=" + DoubleToString(sig.adx, 1) + " eff=" + DoubleToString(sig.efficiency, 2) + " bodyATR=" + DoubleToString(sig.bodyATR, 2) + " slopeATR=" + DoubleToString(sig.emaSlopeATR, 3) + " distEMA=" + DoubleToString(sig.distanceFromSignalEMAATR, 2) + " atrAccel=" + DoubleToString(sig.atrAcceleration, 2) + " sessionQ=" + IntegerToString(sig.sessionQuality));'
+  if ($src.Contains($openOld)) {
+    $src = $src.Replace($openOld, $openNew)
+    Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_entry_diagnostics=true"
+  }
+  Set-Content -Path $ea -Value $src -Encoding UTF8
 }
 
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "compile_safe_patch_script=applied"
