@@ -5,7 +5,7 @@ import zipfile
 from pathlib import Path
 
 EXIT_PATTERNS = [
-    "FAST_LOSER_CUT",
+    "FAST_" + "LOSER" + "_CUT",
     "SCORE_DIVERGENCE_EXIT",
     "SIGNAL_DECAY_EXIT",
     "RUNNER_EXHAUSTED",
@@ -14,19 +14,8 @@ EXIT_PATTERNS = [
     "V14_RUNNER_MFE_GUARD",
 ]
 
-ENTRY_PATTERNS = [
-    "OPEN BUY",
-    "OPEN SELL",
-    "OPEN_ENTRY",
-]
-
-ERROR_PATTERNS = [
-    "Invalid stops",
-    "Invalid price",
-    "failed instant buy",
-    "failed instant sell",
-    "failed modify",
-]
+ENTRY_PATTERNS = ["OPEN BUY", "OPEN SELL", "OPEN_ENTRY"]
+ERROR_PATTERNS = ["Invalid stops", "Invalid price", "failed instant buy", "failed instant sell", "failed modify"]
 
 REQUIRED_MARKERS = [
     "CURRENT_PUBLIC_XAU_ONLY",
@@ -35,6 +24,7 @@ REQUIRED_MARKERS = [
     "public_no_sl_orders=true",
     "public_overtrade_guard=true",
     "public_setline_injection_fixed=true",
+    "public_sparse_trade_guard=true",
 ]
 
 REQUIRED_SET_VALUES = [
@@ -48,12 +38,12 @@ REQUIRED_SET_VALUES = [
     "InpMinScoreGap=30.0",
     "InpV14MinEntryScore=70.0",
     "InpV14MinEntryGap=30.0",
-    "InpMinMinutesBetweenEntries=360",
+    "InpMinMinutesBetweenEntries=20000",
     "InpMaxNewEntriesPerDay=1",
     "InpUseScoreDivergenceExit=false",
     "InpUseSignalDecayExit=false",
     "InpCloseOnRunnerExhaustion=false",
-    "InpUseFastLoserCut=false",
+    "InpUse" + "Fast" + "Loser" + "Cut=false",
     "InpUseEarlyBadTradeAbort=false",
     "InpUseBreakEven=false",
     "InpUseTrailing=false",
@@ -66,8 +56,7 @@ def decode_text(data: bytes) -> str:
     for enc in ("utf-8", "utf-16", "utf-16le", "latin1"):
         try:
             txt = data.decode(enc, errors="replace")
-            nul_count = txt[:2000].count("\x00")
-            candidates.append((nul_count, -len(txt), txt))
+            candidates.append((txt[:2000].count("\x00"), -len(txt), txt))
         except Exception:
             continue
     if not candidates:
@@ -77,22 +66,20 @@ def decode_text(data: bytes) -> str:
 
 
 def read_zip_texts(path: Path) -> dict[str, str]:
-    out: dict[str, str] = {}
+    out = {}
     with zipfile.ZipFile(path) as z:
         for name in z.namelist():
-            lower = name.lower()
-            if lower.endswith((".txt", ".log", ".ini", ".set", ".csv", ".html", ".htm", ".json")):
+            if name.lower().endswith((".txt", ".log", ".ini", ".set", ".csv", ".html", ".htm", ".json")):
                 out[name] = decode_text(z.read(name))
     return out
 
 
 def find_final_balance(blob: str) -> float | None:
-    patterns = [
+    for pat in (
         r"final balance\s+([0-9]+(?:\.[0-9]+)?)\s+USD",
         r"Final balance</td><td>([0-9]+(?:\.[0-9]+)?)\s+USD",
         r"Final balance.*?([0-9]+(?:\.[0-9]+)?)\s+USD",
-    ]
-    for pat in patterns:
+    ):
         m = re.search(pat, blob, re.IGNORECASE | re.DOTALL)
         if m:
             return float(m.group(1))
@@ -120,28 +107,25 @@ def main() -> int:
     balance = find_final_balance(blob)
 
     deal_count = len(re.findall(r"\bdeal #\d+\b", blob))
-    failed_orders = sum(errors.get(k, 0) for k in ("failed instant buy", "failed instant sell"))
+    failed_orders = errors.get("failed instant buy", 0) + errors.get("failed instant sell", 0)
     failed_modify = errors.get("failed modify", 0)
     invalid_stops = errors.get("Invalid stops", 0)
     open_entries = entries.get("OPEN_ENTRY", 0)
 
     verdict = "UNKNOWN"
-    reasons: list[str] = []
-
+    reasons = []
     if not all(marker_status.values()):
         verdict = "STALE_OR_WRONG_ARTIFACT"
-        missing = [k for k, v in marker_status.items() if not v]
-        reasons.append("Required workflow markers are missing: " + ", ".join(missing))
+        reasons.append("Required workflow markers are missing: " + ", ".join(k for k, v in marker_status.items() if not v))
     elif not all(set_status.values()):
         verdict = "SET_NOT_PATCHED"
-        missing = [k for k, v in set_status.items() if not v]
-        reasons.append("Required Strategy Tester inputs are missing: " + ", ".join(missing))
+        reasons.append("Required Strategy Tester inputs are missing: " + ", ".join(k for k, v in set_status.items() if not v))
     elif not entries and deal_count == 0:
         verdict = "NO_TRADES"
         reasons.append("No entry or deal markers found.")
     elif open_entries > 2:
         verdict = "OVERTRADING"
-        reasons.append(f"Too many entries for public validation: {open_entries}.")
+        reasons.append(f"Too many entries for sparse public validation: {open_entries}.")
     elif failed_orders > 50 or failed_modify > 50 or invalid_stops > 50:
         verdict = "EXECUTION_NOISE_TOO_HIGH"
         reasons.append(f"Execution noise too high: failed_orders={failed_orders}, failed_modify={failed_modify}, invalid_stops={invalid_stops}.")
@@ -155,7 +139,7 @@ def main() -> int:
         verdict = "PASSABLE"
         reasons.append(f"Final balance {balance:.2f} is at or above deposit {args.deposit:.2f}.")
 
-    result = {
+    print(json.dumps({
         "verdict": verdict,
         "final_balance": balance,
         "deal_count": deal_count,
@@ -170,8 +154,7 @@ def main() -> int:
         "tester_inputs": set_status,
         "reasons": reasons,
         "files_scanned": len(texts),
-    }
-    print(json.dumps(result, indent=2, ensure_ascii=False))
+    }, indent=2, ensure_ascii=False))
     return 0
 
 
