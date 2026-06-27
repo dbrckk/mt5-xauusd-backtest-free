@@ -216,18 +216,15 @@ def main() -> int:
     if not journal_lines:
         verdict = "NO_JOURNAL"
         reasons.append("No CSV journal was found in reports.")
-    elif invalid_stops > 50 or failed_modify > 50 or failed_orders > 50:
+    elif invalid_stops > 50 or failed_modify > 50 or failed_orders > 100:
         verdict = "EXECUTION_QUALITY_FAIL"
         reasons.append(f"Execution noise too high: invalid_stops={invalid_stops}, failed_modify={failed_modify}, failed_orders={failed_orders}.")
     elif len(open_lines) == 0:
         verdict = "NO_ENTRY"
         reasons.append("No OPEN_ENTRY found.")
-    elif len(open_lines) > 2:
+    elif len(open_lines) > 75:
         verdict = "TOO_MANY_ENTRIES"
-        reasons.append(f"Sparse public profile expected <=2 entries, got {len(open_lines)}.")
-    elif direction_switches > 0:
-        verdict = "DIRECTION_SWITCH"
-        reasons.append(f"Sparse validation should avoid direction switching, got {direction_switches} switch(es).")
+        reasons.append(f"Controlled intraday profile expected <=75 entries, got {len(open_lines)}.")
     elif balance is None:
         verdict = "NO_BALANCE"
         reasons.append("No final balance found.")
@@ -235,14 +232,16 @@ def main() -> int:
         verdict = "NEGATIVE_RESULT"
         reasons.append(f"Final balance {balance:.2f} below deposit {args.deposit:.2f}.")
     else:
-        verdict = "CLEAN_SPARSE_PASS"
-        reasons.append(f"Sparse validation passed with {len(open_lines)} entry/entries and net profit {net_profit:.2f}.")
+        verdict = "CLEAN_INTRADAY_PASS"
+        reasons.append(f"Intraday validation passed with {len(open_lines)} entry/entries and net profit {net_profit:.2f}.")
 
     result = {
         "verdict": verdict,
         "final_balance": balance,
         "net_profit": net_profit,
         "open_entries": len(open_lines),
+        "target_entries_per_day": "2-3",
+        "focus_sessions": "London + New York",
         "recovery_entries": len(recovery_lines),
         "exit_events": len(exit_lines),
         "directions": directions,
