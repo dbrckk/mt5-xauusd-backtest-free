@@ -17,7 +17,8 @@ $txt = $txt.Replace('"InpMinMinutesBetweenEntries=360"', '"InpMinMinutesBetweenE
 $txt = $txt.Replace('"InpMaxNewEntriesPerDay=80"', '"InpMaxNewEntriesPerDay=1"')
 $txt = $txt.Replace('"InpMaxNewEntriesPerDay=500"', '"InpMaxNewEntriesPerDay=1"')
 $txt = $txt.Replace('"InpUseATRAccelerationFilter=false"', '"InpUseATRAccelerationFilter=true"')
-$txt = $txt.Replace('"InpMaxATRAccelerationRatio=1.65"', '"InpMaxATRAccelerationRatio=1.00"')
+$txt = $txt.Replace('"InpMaxATRAccelerationRatio=1.65"', '"InpMaxATRAccelerationRatio=0.85"')
+$txt = $txt.Replace('"InpMaxATRAccelerationRatio=1.00"', '"InpMaxATRAccelerationRatio=0.85"')
 
 $items = @()
 $items += 'InpMacroTF=16385'
@@ -33,7 +34,7 @@ $items += 'InpV14MinEntryGap=30.0'
 $items += 'InpMinMinutesBetweenEntries=20000'
 $items += 'InpMaxNewEntriesPerDay=1'
 $items += 'InpUseATRAccelerationFilter=true'
-$items += 'InpMaxATRAccelerationRatio=1.00'
+$items += 'InpMaxATRAccelerationRatio=0.85'
 $items += 'InpUseScoreDivergenceExit=false'
 $items += 'InpUseSignalDecayExit=false'
 $items += 'InpCloseOnRunnerExhaustion=false'
@@ -56,4 +57,5 @@ Set-Content -Path $runner -Value $txt -Encoding UTF8
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_set_override_forced=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_sparse_trade_guard=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_atr_accel_filter=true"
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_atr_accel_max=0.85"
 Write-Host "Forced public tester set overrides."
