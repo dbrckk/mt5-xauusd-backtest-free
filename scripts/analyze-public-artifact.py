@@ -25,6 +25,7 @@ REQUIRED_MARKERS = [
     "public_overtrade_guard=true",
     "public_setline_injection_fixed=true",
     "public_sparse_trade_guard=true",
+    "public_atr_accel_filter=true",
 ]
 
 REQUIRED_SET_VALUES = [
@@ -40,6 +41,8 @@ REQUIRED_SET_VALUES = [
     "InpV14MinEntryGap=30.0",
     "InpMinMinutesBetweenEntries=20000",
     "InpMaxNewEntriesPerDay=1",
+    "InpUseATRAccelerationFilter=true",
+    "InpMaxATRAccelerationRatio=1.00",
     "InpUseScoreDivergenceExit=false",
     "InpUseSignalDecayExit=false",
     "InpCloseOnRunnerExhaustion=false",
