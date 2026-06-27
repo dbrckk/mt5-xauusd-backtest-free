@@ -47,6 +47,8 @@ $items += 'InpNYStartHourServer=13'
 $items += 'InpNYEndHourServer=17'
 $items += 'InpMinMinutesBetweenEntries=75'
 $items += 'InpMaxNewEntriesPerDay=3'
+$items += 'InpUseATRAccelerationFilter=true'
+$items += 'InpMaxATRAccelerationRatio=1.20'
 $items += 'InpUseATRAccelerationFilter=false'
 $items += 'InpMaxATRAccelerationRatio=9.99'
 $items += 'InpUseScoreDivergenceExit=false'
@@ -72,6 +74,8 @@ Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "pub
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_intraday_frequency_profile=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_target_entries_per_day=2-3"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_focus_sessions=london_ny"
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_atr_accel_filter=true"
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_atr_accel_max=1.20"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_atr_accel_filter=false"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_frequency_blocker_removed=true"
 Write-Host "Forced public intraday frequency tester set overrides."
