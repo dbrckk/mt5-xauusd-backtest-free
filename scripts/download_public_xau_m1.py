@@ -15,6 +15,15 @@ INSTRUMENT = "XAUUSD"
 SCALE = 1000.0
 MAX_PUBLIC_SPREAD_POINTS = 80
 
+# GitHub Actions + Dukascopy can be unstable. This downloader now prioritizes
+# fast, testable London/New York data instead of blocking the whole MT5 run.
+SESSION_HOURS = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+FETCH_TIMEOUT_SECONDS = int(os.environ.get("PUBLIC_FETCH_TIMEOUT_SECONDS", "10"))
+FETCH_RETRIES = int(os.environ.get("PUBLIC_FETCH_RETRIES", "1"))
+MAX_DAYS = int(os.environ.get("PUBLIC_MAX_HISTORY_DAYS", "10"))
+MIN_BARS_TO_STOP = int(os.environ.get("PUBLIC_MIN_BARS_TO_STOP", "6500"))
+MAX_DOWNLOAD_SECONDS = int(os.environ.get("PUBLIC_MAX_DOWNLOAD_SECONDS", "720"))
+
 
 def parse_ymd(value: str) -> dt.date:
     return dt.datetime.strptime(value, "%Y.%m.%d").date()
@@ -27,11 +36,11 @@ def daterange(start: dt.date, end_inclusive: dt.date):
         d += dt.timedelta(days=1)
 
 
-def fetch(url: str, retries: int = 3) -> bytes | None:
+def fetch(url: str, retries: int = FETCH_RETRIES) -> bytes | None:
     for attempt in range(1, retries + 1):
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT_SECONDS) as resp:
                 data = resp.read()
             if data:
                 return data
@@ -41,7 +50,7 @@ def fetch(url: str, retries: int = 3) -> bytes | None:
             print(f"HTTP error {exc.code} for {url}")
         except Exception as exc:
             print(f"download attempt {attempt} failed for {url}: {exc}")
-        time.sleep(1.5 * attempt)
+        time.sleep(0.2 * attempt)
     return None
 
 
@@ -72,15 +81,13 @@ def update_bar(bars: OrderedDict, minute: dt.datetime, price: float, spread_poin
 
 def download_day(day: dt.date, bars: OrderedDict):
     day_count = 0
-    for hour in range(24):
+    for hour in SESSION_HOURS:
         url = f"{BASE_URL}/{INSTRUMENT}/{day.year}/{day.month - 1:02d}/{day.day:02d}/{hour:02d}h_ticks.bi5"
         raw = fetch(url)
         if not raw:
             continue
         decompressed = decompress_bi5(raw)
-        if not decompressed:
-            continue
-        if len(decompressed) < 20:
+        if not decompressed or len(decompressed) < 20:
             continue
         for offset in range(0, len(decompressed) - 19, 20):
             chunk = decompressed[offset:offset + 20]
@@ -98,7 +105,7 @@ def download_day(day: dt.date, bars: OrderedDict):
             minute = tick_time.replace(second=0, microsecond=0, tzinfo=None)
             update_bar(bars, minute, price, spread_points)
             day_count += 1
-    print(f"{day.isoformat()} ticks={day_count} bars_so_far={len(bars)}")
+    print(f"{day.isoformat()} session_ticks={day_count} bars_so_far={len(bars)}")
     return day_count
 
 
@@ -127,14 +134,22 @@ def main():
         print("usage: download_public_xau_m1.py FROM_DATE TO_DATE OUT_CSV")
         return 2
     start = parse_ymd(sys.argv[1])
-    end = parse_ymd(sys.argv[2])
+    requested_end = parse_ymd(sys.argv[2])
+    end = min(requested_end, start + dt.timedelta(days=MAX_DAYS - 1))
     out_csv = sys.argv[3]
     os.makedirs(os.path.dirname(os.path.abspath(out_csv)), exist_ok=True)
 
     bars = OrderedDict()
     total_ticks = 0
+    started = time.time()
     for day in daterange(start, end):
         total_ticks += download_day(day, bars)
+        if len(bars) >= MIN_BARS_TO_STOP:
+            print(f"PUBLIC_HISTORY_FAST_STOP_BARS={len(bars)}")
+            break
+        if time.time() - started > MAX_DOWNLOAD_SECONDS and len(bars) >= 1000:
+            print(f"PUBLIC_HISTORY_TIME_BUDGET_STOP_SECONDS={MAX_DOWNLOAD_SECONDS}")
+            break
 
     bars = fill_missing_minutes(bars)
     with open(out_csv, "w", newline="", encoding="utf-8") as f:
@@ -147,6 +162,9 @@ def main():
     print(f"PUBLIC_HISTORY_CSV={out_csv}")
     print(f"PUBLIC_HISTORY_TICKS={total_ticks}")
     print(f"PUBLIC_HISTORY_BARS={len(bars)}")
+    print(f"PUBLIC_HISTORY_RANGE_REQUESTED={start.isoformat()}..{requested_end.isoformat()}")
+    print(f"PUBLIC_HISTORY_RANGE_DOWNLOADED={start.isoformat()}..{end.isoformat()}")
+    print(f"PUBLIC_HISTORY_SESSION_HOURS={','.join(map(str, SESSION_HOURS))}")
     print(f"PUBLIC_HISTORY_MAX_SPREAD_POINTS={MAX_PUBLIC_SPREAD_POINTS}")
     if len(bars) < 100:
         print("NOT_ENOUGH_PUBLIC_HISTORY")
