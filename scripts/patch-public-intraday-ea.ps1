@@ -179,10 +179,115 @@ if ($src.Contains($oldVGate)) {
   $changed = $true
 }
 
+$oldPublicTarget = @'
+datetime oldest = BasketOldestTime();
+
+double distATR = dist / atr;
+'@
+
+$newPublicTarget = @'
+datetime oldest = BasketOldestTime();
+
+double distATR = dist / atr;
+
+if(_Symbol == "XAU_PUBLIC" || InpTradeSymbol == "XAU_PUBLIC")
+
+{
+
+double publicBasketProfit = BasketProfit();
+
+double publicScore = DirectionScore(sig, dir);
+
+int publicHeldMinutes = (oldest > 0 ? (int)((TimeCurrent() - oldest) / 60) : 0);
+
+if(publicBasketProfit >= 20.0 && dist >= 20.0)
+
+{
+
+CloseAll();
+
+g_status = "PUBLIC_20_POINT_PROFIT_EXIT";
+
+JournalEvent(g_status, StringFormat("profit=%.2f dist=%.2f score=%.1f held=%d", publicBasketProfit, dist, publicScore, publicHeldMinutes));
+
+g_basketPeakProfit = 0.0;
+
+g_partialDone = false;
+
+g_runnerBestScore = 0.0;
+
+g_runnerBestDistanceATR = 0.0;
+
+g_v17BasketMFEATR = 0.0;
+
+return;
+
+}
+
+if(publicBasketProfit >= 30.0 && dist >= 30.0)
+
+{
+
+CloseAll();
+
+g_status = "PUBLIC_30_POINT_PROFIT_EXIT";
+
+JournalEvent(g_status, StringFormat("profit=%.2f dist=%.2f score=%.1f held=%d", publicBasketProfit, dist, publicScore, publicHeldMinutes));
+
+g_basketPeakProfit = 0.0;
+
+g_partialDone = false;
+
+g_runnerBestScore = 0.0;
+
+g_runnerBestDistanceATR = 0.0;
+
+g_v17BasketMFEATR = 0.0;
+
+return;
+
+}
+
+if(publicHeldMinutes >= 90 && dist <= -10.0 && publicScore < 58.0)
+
+{
+
+CloseAll();
+
+g_status = "PUBLIC_BAD_ENTRY_CUT";
+
+JournalEvent(g_status, StringFormat("profit=%.2f dist=%.2f score=%.1f held=%d", publicBasketProfit, dist, publicScore, publicHeldMinutes));
+
+g_cooldownUntil = TimeCurrent() + 45 * 60;
+
+g_basketPeakProfit = 0.0;
+
+g_partialDone = false;
+
+g_runnerBestScore = 0.0;
+
+g_runnerBestDistanceATR = 0.0;
+
+g_v17BasketMFEATR = 0.0;
+
+return;
+
+}
+
+}
+'@
+
+if ($src.Contains($oldPublicTarget)) {
+  $src = $src.Replace($oldPublicTarget, $newPublicTarget)
+  $changed = $true
+}
+
 if (!$changed) { throw "No public intraday EA patches were applied." }
 
 Set-Content -Path $ea -Value $src -Encoding UTF8
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_intraday_ea_patch=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_hard_london_ny_only=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_vgate_fastpass=true"
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_20_30_point_exit=true"
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_bad_entry_cut=true"
 Write-Host "Public intraday EA patch applied."
