@@ -82,6 +82,10 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/apply-public-set-overrides.ps1
 
+      - name: Patch MT5 installer wait
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/patch-mt5-install-wait.ps1
+
       - name: Run public XAU backtest
         shell: pwsh
         run: |
