@@ -1,6 +1,5 @@
 import csv
 import datetime as dt
-import io
 import lzma
 import os
 import struct
@@ -15,14 +14,15 @@ INSTRUMENT = "XAUUSD"
 SCALE = 1000.0
 MAX_PUBLIC_SPREAD_POINTS = 80
 
-# GitHub Actions + Dukascopy can be unstable. This downloader now prioritizes
-# fast, testable London/New York data instead of blocking the whole MT5 run.
-SESSION_HOURS = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
-FETCH_TIMEOUT_SECONDS = int(os.environ.get("PUBLIC_FETCH_TIMEOUT_SECONDS", "10"))
+# This public workflow is for fast London/New-York validation, not for a full
+# institutional tick archive. Keep the data window small enough for GitHub
+# Actions and Dukascopy's public endpoint to finish reliably.
+SESSION_HOURS = [8, 9, 10, 11, 13, 14, 15, 16]
+FETCH_TIMEOUT_SECONDS = int(os.environ.get("PUBLIC_FETCH_TIMEOUT_SECONDS", "7"))
 FETCH_RETRIES = int(os.environ.get("PUBLIC_FETCH_RETRIES", "1"))
-MAX_DAYS = int(os.environ.get("PUBLIC_MAX_HISTORY_DAYS", "10"))
-MIN_BARS_TO_STOP = int(os.environ.get("PUBLIC_MIN_BARS_TO_STOP", "6500"))
-MAX_DOWNLOAD_SECONDS = int(os.environ.get("PUBLIC_MAX_DOWNLOAD_SECONDS", "720"))
+MAX_DAYS = int(os.environ.get("PUBLIC_MAX_HISTORY_DAYS", "6"))
+MIN_BARS_TO_STOP = int(os.environ.get("PUBLIC_MIN_BARS_TO_STOP", "2600"))
+MAX_DOWNLOAD_SECONDS = int(os.environ.get("PUBLIC_MAX_DOWNLOAD_SECONDS", "360"))
 
 
 def parse_ymd(value: str) -> dt.date:
@@ -50,7 +50,7 @@ def fetch(url: str, retries: int = FETCH_RETRIES) -> bytes | None:
             print(f"HTTP error {exc.code} for {url}")
         except Exception as exc:
             print(f"download attempt {attempt} failed for {url}: {exc}")
-        time.sleep(0.2 * attempt)
+        time.sleep(0.15 * attempt)
     return None
 
 
@@ -147,7 +147,7 @@ def main():
         if len(bars) >= MIN_BARS_TO_STOP:
             print(f"PUBLIC_HISTORY_FAST_STOP_BARS={len(bars)}")
             break
-        if time.time() - started > MAX_DOWNLOAD_SECONDS and len(bars) >= 1000:
+        if time.time() - started > MAX_DOWNLOAD_SECONDS and len(bars) >= 700:
             print(f"PUBLIC_HISTORY_TIME_BUDGET_STOP_SECONDS={MAX_DOWNLOAD_SECONDS}")
             break
 
@@ -166,6 +166,7 @@ def main():
     print(f"PUBLIC_HISTORY_RANGE_DOWNLOADED={start.isoformat()}..{end.isoformat()}")
     print(f"PUBLIC_HISTORY_SESSION_HOURS={','.join(map(str, SESSION_HOURS))}")
     print(f"PUBLIC_HISTORY_MAX_SPREAD_POINTS={MAX_PUBLIC_SPREAD_POINTS}")
+    print("PUBLIC_HISTORY_FAST_LONDON_NY_ONLY=true")
     if len(bars) < 100:
         print("NOT_ENOUGH_PUBLIC_HISTORY")
         return 20
