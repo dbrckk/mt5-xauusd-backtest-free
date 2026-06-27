@@ -24,9 +24,11 @@ REQUIRED_MARKERS = [
     "public_no_sl_orders=true",
     "public_overtrade_guard=true",
     "public_setline_injection_fixed=true",
-    "public_sparse_trade_guard=true",
+    "public_intraday_frequency_profile=true",
+    "public_target_entries_per_day=2-3",
+    "public_focus_sessions=london_ny",
     "public_atr_accel_filter=true",
-    "public_atr_accel_max=0.85",
+    "public_atr_accel_max=1.20",
 ]
 
 REQUIRED_SET_VALUES = [
@@ -36,14 +38,23 @@ REQUIRED_SET_VALUES = [
     "InpMacroEMA=34",
     "InpSignalEMA=20",
     "InpOneDecisionPerBar=false",
-    "InpMinScoreToEnter=70.0",
-    "InpMinScoreGap=30.0",
-    "InpV14MinEntryScore=70.0",
-    "InpV14MinEntryGap=30.0",
-    "InpMinMinutesBetweenEntries=20000",
-    "InpMaxNewEntriesPerDay=1",
+    "InpMinScoreToEnter=62.0",
+    "InpMinScoreGap=18.0",
+    "InpV14MinEntryScore=62.0",
+    "InpV14MinEntryGap=18.0",
+    "InpMinADX=18.0",
+    "InpMaxADX=60.0",
+    "InpMinRangeEfficiency=0.15",
+    "InpUseSessionQualityFilter=true",
+    "InpBlockAsianSession=true",
+    "InpLondonStartHourServer=8",
+    "InpLondonEndHourServer=12",
+    "InpNYStartHourServer=13",
+    "InpNYEndHourServer=17",
+    "InpMinMinutesBetweenEntries=90",
+    "InpMaxNewEntriesPerDay=3",
     "InpUseATRAccelerationFilter=true",
-    "InpMaxATRAccelerationRatio=0.85",
+    "InpMaxATRAccelerationRatio=1.20",
     "InpUseScoreDivergenceExit=false",
     "InpUseSignalDecayExit=false",
     "InpCloseOnRunnerExhaustion=false",
@@ -127,10 +138,10 @@ def main() -> int:
     elif not entries and deal_count == 0:
         verdict = "NO_TRADES"
         reasons.append("No entry or deal markers found.")
-    elif open_entries > 2:
+    elif open_entries > 75:
         verdict = "OVERTRADING"
-        reasons.append(f"Too many entries for sparse public validation: {open_entries}.")
-    elif failed_orders > 50 or failed_modify > 50 or invalid_stops > 50:
+        reasons.append(f"Too many entries for controlled intraday validation: {open_entries}.")
+    elif failed_orders > 100 or failed_modify > 50 or invalid_stops > 50:
         verdict = "EXECUTION_NOISE_TOO_HIGH"
         reasons.append(f"Execution noise too high: failed_orders={failed_orders}, failed_modify={failed_modify}, invalid_stops={invalid_stops}.")
     elif exits:
@@ -151,6 +162,9 @@ def main() -> int:
         "failed_modify": failed_modify,
         "invalid_stops": invalid_stops,
         "open_entries": open_entries,
+        "target_entries_per_day": "2-3",
+        "max_new_entries_per_day": 3,
+        "focus_sessions": "London + New York",
         "entries": entries,
         "exits": exits,
         "errors": errors,
