@@ -33,11 +33,8 @@ $items += 'InpSlowEMA=34'
 $items += 'InpMacroEMA=34'
 $items += 'InpSignalEMA=20'
 $items += 'InpOneDecisionPerBar=false'
-$items += 'InpMinScoreToEnter=62.0'
-$items += 'InpMinScoreGap=18.0'
-$items += 'InpV14MinEntryScore=62.0'
-$items += 'InpV14MinEntryGap=18.0'
-$items += 'InpMinMinutesBetweenEntries=90'
+$items += 'InpStartHourServer=8'
+$items += 'InpEndHourServer=17'
 $items += 'InpMinScoreToEnter=55.0'
 $items += 'InpMinScoreGap=10.0'
 $items += 'InpV14MinEntryScore=55.0'
@@ -53,8 +50,6 @@ $items += 'InpNYStartHourServer=13'
 $items += 'InpNYEndHourServer=17'
 $items += 'InpMinMinutesBetweenEntries=45'
 $items += 'InpMaxNewEntriesPerDay=3'
-$items += 'InpUseATRAccelerationFilter=true'
-$items += 'InpMaxATRAccelerationRatio=1.20'
 $items += 'InpUseATRAccelerationFilter=false'
 $items += 'InpMaxATRAccelerationRatio=9.99'
 $items += 'InpUseScoreDivergenceExit=false'
@@ -76,13 +71,17 @@ $line = '$setLines += @(' + $quoted + ')'
 $txt = $txt.Replace($marker, $line + "`r`n" + $marker)
 Set-Content -Path $runner -Value $txt -Encoding UTF8
 
+$eaPatch = "scripts/patch-public-intraday-ea.ps1"
+if (Test-Path $eaPatch) {
+  & pwsh -NoProfile -ExecutionPolicy Bypass -File $eaPatch
+}
+
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_set_override_forced=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_intraday_frequency_profile=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_target_entries_per_day=2-3"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_focus_sessions=london_ny"
-Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_atr_accel_filter=true"
-Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_atr_accel_max=1.20"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_atr_accel_filter=false"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_frequency_blocker_removed=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_intraday_thresholds_relaxed=true"
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_start_end_session_locked=true"
 Write-Host "Forced public intraday frequency tester set overrides."
