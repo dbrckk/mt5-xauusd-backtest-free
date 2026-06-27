@@ -60,10 +60,7 @@ return true;
 }
 '@
 
-if ($src.Contains($oldSession)) {
-  $src = $src.Replace($oldSession, $newSession)
-  $changed = $true
-}
+if ($src.Contains($oldSession)) { $src = $src.Replace($oldSession, $newSession); $changed = $true }
 
 $oldQuality = @'
 if(t.hour < InpStartHourServer || t.hour >= InpEndHourServer) return 0;
@@ -111,10 +108,7 @@ if(london || ny) return 3;
 return 1;
 '@
 
-if ($src.Contains($oldQuality)) {
-  $src = $src.Replace($oldQuality, $newQuality)
-  $changed = $true
-}
+if ($src.Contains($oldQuality)) { $src = $src.Replace($oldQuality, $newQuality); $changed = $true }
 
 $oldVGate = @'
 if(!V14InitialEntryGateOK(sig))
@@ -174,10 +168,7 @@ return false;
 return true;
 '@
 
-if ($src.Contains($oldVGate)) {
-  $src = $src.Replace($oldVGate, $newVGate)
-  $changed = $true
-}
+if ($src.Contains($oldVGate)) { $src = $src.Replace($oldVGate, $newVGate); $changed = $true }
 
 $oldPublicTarget = @'
 datetime oldest = BasketOldestTime();
@@ -224,37 +215,13 @@ return;
 
 }
 
-if(publicBasketProfit >= 30.0 && dist >= 30.0)
-
-{
-
-CloseAll();
-
-g_status = "PUBLIC_30_POINT_PROFIT_EXIT";
-
-JournalEvent(g_status, StringFormat("profit=%.2f dist=%.2f score=%.1f held=%d", publicBasketProfit, dist, publicScore, publicHeldMinutes));
-
-g_basketPeakProfit = 0.0;
-
-g_partialDone = false;
-
-g_runnerBestScore = 0.0;
-
-g_runnerBestDistanceATR = 0.0;
-
-g_v17BasketMFEATR = 0.0;
-
-return;
-
-}
-
 if(publicHeldMinutes >= 90 && dist <= -10.0 && publicScore < 58.0)
 
 {
 
 CloseAll();
 
-g_status = "PUBLIC_BAD_ENTRY_CUT";
+g_status = "PUBLIC_RISK_CUT";
 
 JournalEvent(g_status, StringFormat("profit=%.2f dist=%.2f score=%.1f held=%d", publicBasketProfit, dist, publicScore, publicHeldMinutes));
 
@@ -277,17 +244,26 @@ return;
 }
 '@
 
-if ($src.Contains($oldPublicTarget)) {
-  $src = $src.Replace($oldPublicTarget, $newPublicTarget)
-  $changed = $true
-}
+if ($src.Contains($oldPublicTarget)) { $src = $src.Replace($oldPublicTarget, $newPublicTarget); $changed = $true }
 
 if (!$changed) { throw "No public intraday EA patches were applied." }
-
 Set-Content -Path $ea -Value $src -Encoding UTF8
+
+$runner = "scripts/run-public-history-backtest.ps1"
+$marker = 'Set-Content -Path $setPath -Value $setLines -Encoding ASCII'
+if (Test-Path $runner) {
+  $runTxt = Get-Content -Path $runner -Raw
+  if ($runTxt.Contains($marker) -and -not $runTxt.Contains('public_20_30_point_runtime_set')) {
+    $extra = '$setLines += @("InpMaxNewEntriesPerDay=4","InpUseBasketTimeProfitExit=true","InpBasketTimeProfitMinutes=180","InpMinTimedExitProfitPct=0.20")' + "`r`n" + '$setLines += @("public_20_30_point_runtime_set=true")'
+    $runTxt = $runTxt.Replace($marker, $extra + "`r`n" + $marker)
+    Set-Content -Path $runner -Value $runTxt -Encoding UTF8
+  }
+}
+
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_intraday_ea_patch=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_hard_london_ny_only=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_vgate_fastpass=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_20_30_point_exit=true"
-Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_bad_entry_cut=true"
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_risk_cut=true"
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_20_30_point_runtime_set=true"
 Write-Host "Public intraday EA patch applied."
