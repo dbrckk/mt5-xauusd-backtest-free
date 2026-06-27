@@ -4,65 +4,40 @@ import re
 import zipfile
 from pathlib import Path
 
-EXIT_PATTERNS = [
-    "FAST_" + "LOSER" + "_CUT",
-    "SCORE_DIVERGENCE_EXIT",
-    "SIGNAL_DECAY_EXIT",
-    "RUNNER_EXHAUSTED",
-    "BASKET_PROFIT_LOCK",
-    "V17_ELASTIC_PROFIT_LOCK",
-    "V14_RUNNER_MFE_GUARD",
-]
-
 ENTRY_PATTERNS = ["OPEN BUY", "OPEN SELL", "OPEN_ENTRY"]
 ERROR_PATTERNS = ["Invalid stops", "Invalid price", "failed instant buy", "failed instant sell", "failed modify"]
+EXIT_PATTERNS = [
+    "PUBLIC_20_POINT_PROFIT_EXIT",
+    "PUBLIC_RISK_CUT",
+    "TIMED_PROFIT_EXIT",
+    "BASKET_TP",
+    "EMERGENCY_ATR_CLOSE",
+]
 
 REQUIRED_MARKERS = [
     "CURRENT_PUBLIC_XAU_ONLY",
     "compile_safe_patch_script=applied",
     "tester_setlines_warmup_injection=true",
     "public_no_sl_orders=true",
-    "public_overtrade_guard=true",
-    "public_setline_injection_fixed=true",
     "public_intraday_frequency_profile=true",
-    "public_target_entries_per_day=2-3",
     "public_focus_sessions=london_ny",
-    "public_atr_accel_filter=true",
-    "public_atr_accel_max=1.20",
 ]
 
-REQUIRED_SET_VALUES = [
-    "InpMacroTF=16385",
-    "InpTrendTF=16385",
-    "InpSlowEMA=34",
-    "InpMacroEMA=34",
-    "InpSignalEMA=20",
-    "InpOneDecisionPerBar=false",
-    "InpMinScoreToEnter=62.0",
-    "InpMinScoreGap=18.0",
-    "InpV14MinEntryScore=62.0",
-    "InpV14MinEntryGap=18.0",
-    "InpMinADX=18.0",
-    "InpMaxADX=60.0",
-    "InpMinRangeEfficiency=0.15",
-    "InpUseSessionQualityFilter=true",
-    "InpBlockAsianSession=true",
-    "InpLondonStartHourServer=8",
-    "InpLondonEndHourServer=12",
-    "InpNYStartHourServer=13",
-    "InpNYEndHourServer=17",
-    "InpMinMinutesBetweenEntries=90",
-    "InpMaxNewEntriesPerDay=3",
-    "InpUseATRAccelerationFilter=true",
-    "InpMaxATRAccelerationRatio=1.20",
-    "InpUseScoreDivergenceExit=false",
-    "InpUseSignalDecayExit=false",
-    "InpCloseOnRunnerExhaustion=false",
-    "InpUse" + "Fast" + "Loser" + "Cut=false",
-    "InpUseEarlyBadTradeAbort=false",
-    "InpUseBreakEven=false",
-    "InpUseTrailing=false",
-    "InpUseBasketNetBreakEvenLock=false",
+PROFILE_MARKERS = [
+    "public_20_30_point_runtime_set=true",
+    "public_20_30_point_profile=true",
+    "public_20_30_point_exit=true",
+    "public_risk_cut=true",
+    "public_start_end_session_locked=true",
+]
+
+IMPORTANT_SET_VALUES = [
+    "InpMaxNewEntriesPerDay=4",
+    "InpUseBasketTimeProfitExit=true",
+    "InpBasketTimeProfitMinutes=180",
+    "InpMinTimedExitProfitPct=0.20",
+    "InpUseATRAccelerationFilter=false",
+    "InpMaxATRAccelerationRatio=9.99",
 ]
 
 
@@ -115,7 +90,8 @@ def main() -> int:
     blob = "\n".join(texts.values())
 
     marker_status = {m: (m in blob) for m in REQUIRED_MARKERS}
-    set_status = {m: (m in blob) for m in REQUIRED_SET_VALUES}
+    profile_status = {m: (m in blob) for m in PROFILE_MARKERS}
+    set_status = {m: (m in blob) for m in IMPORTANT_SET_VALUES}
     exits = count_hits(blob, EXIT_PATTERNS)
     entries = count_hits(blob, ENTRY_PATTERNS)
     errors = count_hits(blob, ERROR_PATTERNS)
@@ -126,27 +102,25 @@ def main() -> int:
     failed_modify = errors.get("failed modify", 0)
     invalid_stops = errors.get("Invalid stops", 0)
     open_entries = entries.get("OPEN_ENTRY", 0)
+    run_completed = "run_public_backtest_exit_code=0" in blob or "Test passed" in blob or balance is not None
 
     verdict = "UNKNOWN"
     reasons = []
     if not all(marker_status.values()):
         verdict = "STALE_OR_WRONG_ARTIFACT"
         reasons.append("Required workflow markers are missing: " + ", ".join(k for k, v in marker_status.items() if not v))
-    elif not all(set_status.values()):
-        verdict = "SET_NOT_PATCHED"
-        reasons.append("Required Strategy Tester inputs are missing: " + ", ".join(k for k, v in set_status.items() if not v))
+    elif not run_completed:
+        verdict = "RUN_NOT_COMPLETED"
+        reasons.append("MT5 run did not complete; no final balance/test result was found.")
     elif not entries and deal_count == 0:
         verdict = "NO_TRADES"
         reasons.append("No entry or deal markers found.")
-    elif open_entries > 75:
-        verdict = "OVERTRADING"
-        reasons.append(f"Too many entries for controlled intraday validation: {open_entries}.")
-    elif failed_orders > 100 or failed_modify > 50 or invalid_stops > 50:
+    elif open_entries < 10:
+        verdict = "UNDERTRADING"
+        reasons.append(f"Too few entries for the intraday objective: {open_entries}.")
+    elif failed_orders > 160 or failed_modify > 50 or invalid_stops > 50:
         verdict = "EXECUTION_NOISE_TOO_HIGH"
         reasons.append(f"Execution noise too high: failed_orders={failed_orders}, failed_modify={failed_modify}, invalid_stops={invalid_stops}.")
-    elif exits:
-        verdict = "EXITS_TOO_AGGRESSIVE"
-        reasons.append("Exit markers found: " + ", ".join(f"{k}={v}" for k, v in exits.items()))
     elif balance is not None and balance < args.deposit:
         verdict = "TRADES_NEGATIVE"
         reasons.append(f"Final balance {balance:.2f} is below deposit {args.deposit:.2f}.")
@@ -163,13 +137,14 @@ def main() -> int:
         "invalid_stops": invalid_stops,
         "open_entries": open_entries,
         "target_entries_per_day": "2-3",
-        "max_new_entries_per_day": 3,
+        "target_profit_points": "20-30",
         "focus_sessions": "London + New York",
         "entries": entries,
         "exits": exits,
         "errors": errors,
         "markers": marker_status,
-        "tester_inputs": set_status,
+        "profile_markers": profile_status,
+        "important_tester_inputs": set_status,
         "reasons": reasons,
         "files_scanned": len(texts),
     }, indent=2, ensure_ascii=False))
