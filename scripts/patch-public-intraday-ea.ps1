@@ -241,32 +241,6 @@ return;
 
 }
 
-if(publicHeldMinutes >= 150 && !SessionOK() && publicBasketProfit >= 0.0)
-
-{
-
-CloseAll();
-
-g_status = "PUBLIC_SESSION_FLAT";
-
-JournalEvent(g_status, StringFormat("profit=%.2f dist=%.2f score=%.1f held=%d", publicBasketProfit, dist, publicScore, publicHeldMinutes));
-
-g_cooldownUntil = TimeCurrent() + 60 * 60;
-
-g_basketPeakProfit = 0.0;
-
-g_partialDone = false;
-
-g_runnerBestScore = 0.0;
-
-g_runnerBestDistanceATR = 0.0;
-
-g_v17BasketMFEATR = 0.0;
-
-return;
-
-}
-
 if(publicHeldMinutes >= 45 && dist <= -20.0)
 
 {
@@ -347,8 +321,8 @@ Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "pub
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_slope_filter=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_20_30_point_exit=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_risk_cut=true"
-Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_session_flat=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_hard_cut=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_post_profit_cooldown=true"
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_session_flat_disabled=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_20_30_point_runtime_set=true"
 Write-Host "Public intraday EA patch applied."
