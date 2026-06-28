@@ -153,7 +153,7 @@ bool publicSlopeOK = ((sig.direction == 1 && sig.emaSlopeATR > 0.05) || (sig.dir
 
 bool publicImpulseOK = !(publicNY && sig.bodyATR > 1.50 && sig.distanceFromSignalEMAATR < 1.00);
 
-bool publicWeakLondonBuyChaseOK = !(publicLondon && sig.direction == 1 && publicScore <= 55.0 && sig.bodyATR > 0.30 && sig.distanceFromSignalEMAATR > 2.20);
+bool publicWeakLondonBuyChaseOK = !(publicLondon && sig.direction == 1 && publicScore < 65.0 && sig.bodyATR > 0.30 && sig.distanceFromSignalEMAATR > 2.20);
 
 bool publicOK = (sig.direction != 0 && sig.sessionQuality >= 3 && !publicLateNY && publicScore >= publicMinScore && sig.scoreGap >= InpMinScoreGap && publicSlopeOK && publicImpulseOK && publicWeakLondonBuyChaseOK);
 
@@ -322,6 +322,7 @@ Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "pub
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_block_ny_after_15=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_slope_filter=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_weak_london_buy_chase_block=true"
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_london_buy_chase_score_cap=65"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_20_30_point_exit=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_risk_cut=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_hard_cut=true"
