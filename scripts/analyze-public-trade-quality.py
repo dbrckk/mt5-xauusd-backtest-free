@@ -231,6 +231,9 @@ def main() -> int:
     elif balance < args.deposit:
         verdict = "NEGATIVE_RESULT"
         reasons.append(f"Final balance {balance:.2f} below deposit {args.deposit:.2f}.")
+    elif balance == args.deposit:
+        verdict = "FLAT_RESULT"
+        reasons.append(f"Final balance {balance:.2f} equals deposit {args.deposit:.2f}; no positive edge confirmed.")
     else:
         verdict = "CLEAN_INTRADAY_PASS"
         reasons.append(f"Intraday validation passed with {len(open_lines)} entry/entries and net profit {net_profit:.2f}.")
