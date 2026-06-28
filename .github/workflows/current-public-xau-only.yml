@@ -56,6 +56,10 @@ jobs:
       BT_LEVERAGE: ${{ inputs.leverage }}
       BT_MODEL: ${{ inputs.model }}
       BT_TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
+      PUBLIC_FETCH_TIMEOUT_SECONDS: "20"
+      PUBLIC_FETCH_RETRIES: "2"
+      PUBLIC_MAX_DOWNLOAD_SECONDS: "720"
+      PUBLIC_MIN_REQUIRED_BARS: "700"
       MT5_LOGIN: ${{ secrets.MT5_LOGIN }}
       MT5_PASSWORD: ${{ secrets.MT5_PASSWORD }}
       MT5_SERVER: ${{ secrets.MT5_SERVER }}
@@ -79,6 +83,10 @@ jobs:
           Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "input_to_date=${{ inputs.to_date }}"
           Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "input_deposit=${{ inputs.deposit }}"
           Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "validation_window=out_of_sample_2026_06_09_2026_06_14"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "public_fetch_timeout_seconds=$env:PUBLIC_FETCH_TIMEOUT_SECONDS"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "public_fetch_retries=$env:PUBLIC_FETCH_RETRIES"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "public_max_download_seconds=$env:PUBLIC_MAX_DOWNLOAD_SECONDS"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "public_min_required_bars=$env:PUBLIC_MIN_REQUIRED_BARS"
 
       - name: Apply public diagnostic patch
         shell: pwsh
