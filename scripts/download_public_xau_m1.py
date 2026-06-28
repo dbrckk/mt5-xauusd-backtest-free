@@ -14,15 +14,16 @@ INSTRUMENT = "XAUUSD"
 SCALE = 1000.0
 MAX_PUBLIC_SPREAD_POINTS = 80
 
-# This public workflow is for fast London/New-York validation, not for a full
-# institutional tick archive. Keep the data window small enough for GitHub
-# Actions and Dukascopy's public endpoint to finish reliably.
+# Public GitHub Actions validation uses Dukascopy's free endpoint. This endpoint
+# sometimes stalls or returns short 503 bursts. Keep the window compact, but use
+# enough timeout/retry budget so a valid test is not rejected as NO_HISTORY.
 SESSION_HOURS = [8, 9, 10, 11, 13, 14, 15, 16]
-FETCH_TIMEOUT_SECONDS = int(os.environ.get("PUBLIC_FETCH_TIMEOUT_SECONDS", "7"))
-FETCH_RETRIES = int(os.environ.get("PUBLIC_FETCH_RETRIES", "1"))
+FETCH_TIMEOUT_SECONDS = int(os.environ.get("PUBLIC_FETCH_TIMEOUT_SECONDS", "20"))
+FETCH_RETRIES = int(os.environ.get("PUBLIC_FETCH_RETRIES", "2"))
 MAX_DAYS = int(os.environ.get("PUBLIC_MAX_HISTORY_DAYS", "6"))
 MIN_BARS_TO_STOP = int(os.environ.get("PUBLIC_MIN_BARS_TO_STOP", "2600"))
-MAX_DOWNLOAD_SECONDS = int(os.environ.get("PUBLIC_MAX_DOWNLOAD_SECONDS", "360"))
+MAX_DOWNLOAD_SECONDS = int(os.environ.get("PUBLIC_MAX_DOWNLOAD_SECONDS", "720"))
+MIN_REQUIRED_BARS = int(os.environ.get("PUBLIC_MIN_REQUIRED_BARS", "700"))
 
 
 def parse_ymd(value: str) -> dt.date:
@@ -37,9 +38,18 @@ def daterange(start: dt.date, end_inclusive: dt.date):
 
 
 def fetch(url: str, retries: int = FETCH_RETRIES) -> bytes | None:
+    last_error = None
     for attempt in range(1, retries + 1):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) GitHubActions-XAU-Public-Backtest",
+                    "Accept": "*/*",
+                    "Connection": "close",
+                    "Cache-Control": "no-cache",
+                },
+            )
             with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT_SECONDS) as resp:
                 data = resp.read()
             if data:
@@ -47,10 +57,14 @@ def fetch(url: str, retries: int = FETCH_RETRIES) -> bytes | None:
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
                 return None
-            print(f"HTTP error {exc.code} for {url}")
+            last_error = f"HTTP error {exc.code}"
+            print(f"download attempt {attempt}/{retries} failed for {url}: {last_error}")
         except Exception as exc:
-            print(f"download attempt {attempt} failed for {url}: {exc}")
-        time.sleep(0.15 * attempt)
+            last_error = str(exc)
+            print(f"download attempt {attempt}/{retries} failed for {url}: {last_error}")
+        time.sleep(min(3.0, 0.75 * attempt))
+    if last_error:
+        print(f"download exhausted for {url}: {last_error}")
     return None
 
 
@@ -81,6 +95,7 @@ def update_bar(bars: OrderedDict, minute: dt.datetime, price: float, spread_poin
 
 def download_day(day: dt.date, bars: OrderedDict):
     day_count = 0
+    hours_ok = 0
     for hour in SESSION_HOURS:
         url = f"{BASE_URL}/{INSTRUMENT}/{day.year}/{day.month - 1:02d}/{day.day:02d}/{hour:02d}h_ticks.bi5"
         raw = fetch(url)
@@ -89,6 +104,7 @@ def download_day(day: dt.date, bars: OrderedDict):
         decompressed = decompress_bi5(raw)
         if not decompressed or len(decompressed) < 20:
             continue
+        hours_ok += 1
         for offset in range(0, len(decompressed) - 19, 20):
             chunk = decompressed[offset:offset + 20]
             try:
@@ -105,7 +121,7 @@ def download_day(day: dt.date, bars: OrderedDict):
             minute = tick_time.replace(second=0, microsecond=0, tzinfo=None)
             update_bar(bars, minute, price, spread_points)
             day_count += 1
-    print(f"{day.isoformat()} session_ticks={day_count} bars_so_far={len(bars)}")
+    print(f"{day.isoformat()} session_ticks={day_count} session_hours_ok={hours_ok} bars_so_far={len(bars)}")
     return day_count
 
 
@@ -142,12 +158,16 @@ def main():
     bars = OrderedDict()
     total_ticks = 0
     started = time.time()
+    days_with_ticks = 0
     for day in daterange(start, end):
-        total_ticks += download_day(day, bars)
+        day_ticks = download_day(day, bars)
+        total_ticks += day_ticks
+        if day_ticks > 0:
+            days_with_ticks += 1
         if len(bars) >= MIN_BARS_TO_STOP:
             print(f"PUBLIC_HISTORY_FAST_STOP_BARS={len(bars)}")
             break
-        if time.time() - started > MAX_DOWNLOAD_SECONDS and len(bars) >= 700:
+        if time.time() - started > MAX_DOWNLOAD_SECONDS and len(bars) >= MIN_REQUIRED_BARS:
             print(f"PUBLIC_HISTORY_TIME_BUDGET_STOP_SECONDS={MAX_DOWNLOAD_SECONDS}")
             break
 
@@ -162,13 +182,18 @@ def main():
     print(f"PUBLIC_HISTORY_CSV={out_csv}")
     print(f"PUBLIC_HISTORY_TICKS={total_ticks}")
     print(f"PUBLIC_HISTORY_BARS={len(bars)}")
+    print(f"PUBLIC_HISTORY_DAYS_WITH_TICKS={days_with_ticks}")
     print(f"PUBLIC_HISTORY_RANGE_REQUESTED={start.isoformat()}..{requested_end.isoformat()}")
     print(f"PUBLIC_HISTORY_RANGE_DOWNLOADED={start.isoformat()}..{end.isoformat()}")
     print(f"PUBLIC_HISTORY_SESSION_HOURS={','.join(map(str, SESSION_HOURS))}")
     print(f"PUBLIC_HISTORY_MAX_SPREAD_POINTS={MAX_PUBLIC_SPREAD_POINTS}")
+    print(f"PUBLIC_FETCH_TIMEOUT_SECONDS={FETCH_TIMEOUT_SECONDS}")
+    print(f"PUBLIC_FETCH_RETRIES={FETCH_RETRIES}")
+    print(f"PUBLIC_MAX_DOWNLOAD_SECONDS={MAX_DOWNLOAD_SECONDS}")
     print("PUBLIC_HISTORY_FAST_LONDON_NY_ONLY=true")
-    if len(bars) < 100:
+    if len(bars) < MIN_REQUIRED_BARS:
         print("NOT_ENOUGH_PUBLIC_HISTORY")
+        print("PUBLIC_HISTORY_SOURCE_UNAVAILABLE=true")
         return 20
     return 0
 
