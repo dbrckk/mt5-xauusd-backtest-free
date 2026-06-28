@@ -12,14 +12,29 @@ $txt = Get-Content -Path $runner -Raw
 $marker = 'Set-Content -Path $setPath -Value $setLines -Encoding ASCII'
 if (!$txt.Contains($marker)) { throw "Tester set marker not found." }
 
-$txt = $txt.Replace('"InpMinMinutesBetweenEntries=0"', '"InpMinMinutesBetweenEntries=45"')
-$txt = $txt.Replace('"InpMinMinutesBetweenEntries=75"', '"InpMinMinutesBetweenEntries=45"')
-$txt = $txt.Replace('"InpMinMinutesBetweenEntries=90"', '"InpMinMinutesBetweenEntries=45"')
-$txt = $txt.Replace('"InpMinMinutesBetweenEntries=360"', '"InpMinMinutesBetweenEntries=45"')
-$txt = $txt.Replace('"InpMinMinutesBetweenEntries=20000"', '"InpMinMinutesBetweenEntries=45"')
-$txt = $txt.Replace('"InpMaxNewEntriesPerDay=80"', '"InpMaxNewEntriesPerDay=3"')
-$txt = $txt.Replace('"InpMaxNewEntriesPerDay=500"', '"InpMaxNewEntriesPerDay=3"')
-$txt = $txt.Replace('"InpMaxNewEntriesPerDay=1"', '"InpMaxNewEntriesPerDay=3"')
+# Normalize older inserted profile values first. MT5 may keep the first duplicate value.
+$txt = $txt.Replace('"InpMinScoreToEnter=70.0"', '"InpMinScoreToEnter=50.0"')
+$txt = $txt.Replace('"InpMinScoreToEnter=62.0"', '"InpMinScoreToEnter=50.0"')
+$txt = $txt.Replace('"InpMinScoreToEnter=55.0"', '"InpMinScoreToEnter=50.0"')
+$txt = $txt.Replace('"InpMinScoreGap=30.0"', '"InpMinScoreGap=8.0"')
+$txt = $txt.Replace('"InpMinScoreGap=18.0"', '"InpMinScoreGap=8.0"')
+$txt = $txt.Replace('"InpMinScoreGap=10.0"', '"InpMinScoreGap=8.0"')
+$txt = $txt.Replace('"InpV14MinEntryScore=70.0"', '"InpV14MinEntryScore=50.0"')
+$txt = $txt.Replace('"InpV14MinEntryScore=62.0"', '"InpV14MinEntryScore=50.0"')
+$txt = $txt.Replace('"InpV14MinEntryScore=55.0"', '"InpV14MinEntryScore=50.0"')
+$txt = $txt.Replace('"InpV14MinEntryGap=30.0"', '"InpV14MinEntryGap=8.0"')
+$txt = $txt.Replace('"InpV14MinEntryGap=18.0"', '"InpV14MinEntryGap=8.0"')
+$txt = $txt.Replace('"InpV14MinEntryGap=10.0"', '"InpV14MinEntryGap=8.0"')
+$txt = $txt.Replace('"InpMinMinutesBetweenEntries=0"', '"InpMinMinutesBetweenEntries=30"')
+$txt = $txt.Replace('"InpMinMinutesBetweenEntries=45"', '"InpMinMinutesBetweenEntries=30"')
+$txt = $txt.Replace('"InpMinMinutesBetweenEntries=75"', '"InpMinMinutesBetweenEntries=30"')
+$txt = $txt.Replace('"InpMinMinutesBetweenEntries=90"', '"InpMinMinutesBetweenEntries=30"')
+$txt = $txt.Replace('"InpMinMinutesBetweenEntries=360"', '"InpMinMinutesBetweenEntries=30"')
+$txt = $txt.Replace('"InpMinMinutesBetweenEntries=20000"', '"InpMinMinutesBetweenEntries=30"')
+$txt = $txt.Replace('"InpMaxNewEntriesPerDay=80"', '"InpMaxNewEntriesPerDay=4"')
+$txt = $txt.Replace('"InpMaxNewEntriesPerDay=500"', '"InpMaxNewEntriesPerDay=4"')
+$txt = $txt.Replace('"InpMaxNewEntriesPerDay=1"', '"InpMaxNewEntriesPerDay=4"')
+$txt = $txt.Replace('"InpMaxNewEntriesPerDay=3"', '"InpMaxNewEntriesPerDay=4"')
 $txt = $txt.Replace('"InpUseATRAccelerationFilter=true"', '"InpUseATRAccelerationFilter=false"')
 $txt = $txt.Replace('"InpMaxATRAccelerationRatio=1.65"', '"InpMaxATRAccelerationRatio=9.99"')
 $txt = $txt.Replace('"InpMaxATRAccelerationRatio=1.20"', '"InpMaxATRAccelerationRatio=9.99"')
@@ -35,23 +50,26 @@ $items += 'InpSignalEMA=20'
 $items += 'InpOneDecisionPerBar=false'
 $items += 'InpStartHourServer=8'
 $items += 'InpEndHourServer=17'
-$items += 'InpMinScoreToEnter=55.0'
-$items += 'InpMinScoreGap=10.0'
-$items += 'InpV14MinEntryScore=55.0'
-$items += 'InpV14MinEntryGap=10.0'
-$items += 'InpMinADX=14.0'
-$items += 'InpMaxADX=65.0'
-$items += 'InpMinRangeEfficiency=0.05'
+$items += 'InpMinScoreToEnter=50.0'
+$items += 'InpMinScoreGap=8.0'
+$items += 'InpV14MinEntryScore=50.0'
+$items += 'InpV14MinEntryGap=8.0'
+$items += 'InpMinADX=12.0'
+$items += 'InpMaxADX=70.0'
+$items += 'InpMinRangeEfficiency=0.00'
 $items += 'InpUseSessionQualityFilter=true'
 $items += 'InpBlockAsianSession=true'
 $items += 'InpLondonStartHourServer=8'
 $items += 'InpLondonEndHourServer=12'
 $items += 'InpNYStartHourServer=13'
 $items += 'InpNYEndHourServer=17'
-$items += 'InpMinMinutesBetweenEntries=45'
-$items += 'InpMaxNewEntriesPerDay=3'
+$items += 'InpMinMinutesBetweenEntries=30'
+$items += 'InpMaxNewEntriesPerDay=4'
 $items += 'InpUseATRAccelerationFilter=false'
 $items += 'InpMaxATRAccelerationRatio=9.99'
+$items += 'InpUseBasketTimeProfitExit=true'
+$items += 'InpBasketTimeProfitMinutes=180'
+$items += 'InpMinTimedExitProfitPct=0.20'
 $items += 'InpUseScoreDivergenceExit=false'
 $items += 'InpUseSignalDecayExit=false'
 $items += 'InpCloseOnRunnerExhaustion=false'
@@ -84,4 +102,6 @@ Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "pub
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_frequency_blocker_removed=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_intraday_thresholds_relaxed=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_start_end_session_locked=true"
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_duplicate_thresholds_normalized=true"
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_20_30_point_profile=true"
 Write-Host "Forced public intraday frequency tester set overrides."
