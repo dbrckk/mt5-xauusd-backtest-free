@@ -73,6 +73,7 @@ jobs:
           Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "workflow=current-public-xau-only.yml"
           Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "run_number=${{ github.run_number }}"
           Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "sha=${{ github.sha }}"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "artifact_name=CURRENT-PUBLIC-XAU-ONLY-${{ github.run_number }}-${{ github.sha }}"
 
       - name: Apply public diagnostic patch
         shell: pwsh
@@ -116,7 +117,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: CURRENT-PUBLIC-XAU-ONLY
+          name: CURRENT-PUBLIC-XAU-ONLY-${{ github.run_number }}-${{ github.sha }}
           path: reports/**
           if-no-files-found: error
           retention-days: 14
