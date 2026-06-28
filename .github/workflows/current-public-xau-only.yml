@@ -11,12 +11,12 @@ on:
       from_date:
         description: "Backtest start date YYYY.MM.DD"
         required: true
-        default: "2026.06.01"
+        default: "2026.06.09"
         type: string
       to_date:
         description: "Backtest end date YYYY.MM.DD"
         required: true
-        default: "2026.06.20"
+        default: "2026.06.14"
         type: string
       deposit:
         description: "Initial deposit"
@@ -74,6 +74,11 @@ jobs:
           Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "run_number=${{ github.run_number }}"
           Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "sha=${{ github.sha }}"
           Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "artifact_name=CURRENT-PUBLIC-XAU-ONLY-${{ github.run_number }}-${{ github.sha }}"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "input_period=${{ inputs.period }}"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "input_from_date=${{ inputs.from_date }}"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "input_to_date=${{ inputs.to_date }}"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "input_deposit=${{ inputs.deposit }}"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "validation_window=out_of_sample_2026_06_09_2026_06_14"
 
       - name: Apply public diagnostic patch
         shell: pwsh
