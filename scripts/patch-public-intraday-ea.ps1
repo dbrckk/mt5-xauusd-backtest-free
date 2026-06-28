@@ -145,6 +145,8 @@ bool publicNY = (publicTime.hour >= InpNYStartHourServer && publicTime.hour < In
 
 bool publicLateNY = (publicNY && publicTime.hour >= 15);
 
+bool publicLateLondonBuy = (publicLondon && sig.direction == 1 && publicTime.hour == 11 && publicTime.min >= 30);
+
 double publicScore = DirectionScore(sig, sig.direction);
 
 double publicMinScore = (publicLondon ? 50.0 : 65.0);
@@ -155,7 +157,9 @@ bool publicImpulseOK = !(publicNY && sig.bodyATR > 1.50 && sig.distanceFromSigna
 
 bool publicWeakLondonBuyChaseOK = !(publicLondon && sig.direction == 1 && publicScore < 65.0 && sig.bodyATR > 0.30 && sig.distanceFromSignalEMAATR > 2.20);
 
-bool publicOK = (sig.direction != 0 && sig.sessionQuality >= 3 && !publicLateNY && publicScore >= publicMinScore && sig.scoreGap >= InpMinScoreGap && publicSlopeOK && publicImpulseOK && publicWeakLondonBuyChaseOK);
+bool publicOK = (sig.direction != 0 && sig.sessionQuality >= 3 && !publicLateNY && !publicLateLondonBuy && publicScore >= publicMinScore && sig.scoreGap >= InpMinScoreGap && publicSlopeOK && publicImpulseOK && publicWeakLondonBuyChaseOK);
+
+string publicGateLog = " score=" + DoubleToString(publicScore, 1) + " min=" + DoubleToString(publicMinScore, 1) + " gap=" + DoubleToString(sig.scoreGap, 1) + " slope=" + DoubleToString(sig.emaSlopeATR, 3) + " bodyATR=" + DoubleToString(sig.bodyATR, 2) + " distEMA=" + DoubleToString(sig.distanceFromSignalEMAATR, 2) + " lateNY=" + (publicLateNY ? "1" : "0") + " lateLondonBuy=" + (publicLateLondonBuy ? "1" : "0") + " weakLondonBuyChaseOK=" + (publicWeakLondonBuyChaseOK ? "1" : "0");
 
 if(publicOK)
 
@@ -163,13 +167,15 @@ if(publicOK)
 
 g_status = "PUBLIC_INTRADAY_ENTRY_OK";
 
+DecisionLog(g_status + publicGateLog);
+
 return true;
 
 }
 
 g_status = "PUBLIC_INTRADAY_ENTRY_BLOCK";
 
-DecisionLog(g_status + " score=" + DoubleToString(publicScore, 1) + " min=" + DoubleToString(publicMinScore, 1) + " gap=" + DoubleToString(sig.scoreGap, 1) + " slope=" + DoubleToString(sig.emaSlopeATR, 3) + " bodyATR=" + DoubleToString(sig.bodyATR, 2) + " distEMA=" + DoubleToString(sig.distanceFromSignalEMAATR, 2) + " lateNY=" + (publicLateNY ? "1" : "0") + " weakLondonBuyChaseOK=" + (publicWeakLondonBuyChaseOK ? "1" : "0"));
+DecisionLog(g_status + publicGateLog);
 
 return false;
 
@@ -323,6 +329,8 @@ Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "pub
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_slope_filter=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_weak_london_buy_chase_block=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_london_buy_chase_score_cap=65"
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_late_london_buy_block=true"
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_entry_ok_decision_log=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_20_30_point_exit=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_risk_cut=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_hard_cut=true"
