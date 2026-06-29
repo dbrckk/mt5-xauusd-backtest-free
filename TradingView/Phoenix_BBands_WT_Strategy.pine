@@ -1,0 +1,67 @@
+//@version=5
+strategy("Phoenix B-Bands WT Strategy - XAUUSD", overlay=true, initial_capital=10000, pyramiding=0, process_orders_on_close=true, commission_type=strategy.commission.cash_per_order, commission_value=0)
+
+bandLen = input.int(20, "B-Bands length", minval=2)
+redDev = input.float(3.618, "Red band deviation", step=0.001)
+wtChannel = input.int(10, "WT channel length", minval=1)
+wtAverage = input.int(21, "WT average length", minval=1)
+wtSmooth = input.int(4, "WT smooth length", minval=1)
+wtNormLookback = input.int(100, "WT normalize lookback", minval=10)
+wtBuyExtreme = input.float(5.0, "WT buy extreme")
+wtSellExtreme = input.float(95.0, "WT sell extreme")
+useCrossFallback = input.bool(true, "Use WT cross fallback")
+targetPoints = input.float(20.0, "Target price points", step=0.1)
+stopPoints = input.float(20.0, "Stop price points", step=0.1)
+useSessions = input.bool(true, "Use London/NY sessions")
+london = input.session("0800-1200", "London session")
+ny = input.session("1300-1500", "NY session")
+
+basis = ta.sma(close, bandLen)
+stdev = ta.stdev(close, bandLen)
+upperRed = basis + redDev * stdev
+lowerRed = basis - redDev * stdev
+
+ap = hlc3
+esa = ta.ema(ap, wtChannel)
+d = ta.ema(math.abs(ap - esa), wtChannel)
+ci = d != 0.0 ? (ap - esa) / (0.015 * d) : 0.0
+wtRaw = ta.ema(ci, wtAverage)
+wtLo = ta.lowest(wtRaw, wtNormLookback)
+wtHi = ta.highest(wtRaw, wtNormLookback)
+wt1 = wtHi != wtLo ? 100.0 * (wtRaw - wtLo) / (wtHi - wtLo) : 50.0
+wt2 = ta.sma(wt1, wtSmooth)
+
+inLondon = not na(time(timeframe.period, london))
+inNY = not na(time(timeframe.period, ny))
+sessionOK = not useSessions or inLondon or inNY
+
+lowerTouch = low <= lowerRed
+upperTouch = high >= upperRed
+buyExtreme = wt1 <= wtBuyExtreme
+sellExtreme = wt1 >= wtSellExtreme
+buyCross = useCrossFallback and ta.crossover(wt1, wt2) and wt1 < 35
+sellCross = useCrossFallback and ta.crossunder(wt1, wt2) and wt1 > 65
+
+buySignal = sessionOK and lowerTouch and (buyExtreme or buyCross)
+sellSignal = sessionOK and upperTouch and (sellExtreme or sellCross)
+
+if buySignal and strategy.position_size <= 0
+    strategy.entry("BUY", strategy.long)
+
+if sellSignal and strategy.position_size >= 0
+    strategy.entry("SELL", strategy.short)
+
+if strategy.position_size > 0
+    strategy.exit("BUY_EXIT", "BUY", limit=strategy.position_avg_price + targetPoints, stop=strategy.position_avg_price - stopPoints)
+
+if strategy.position_size < 0
+    strategy.exit("SELL_EXIT", "SELL", limit=strategy.position_avg_price - targetPoints, stop=strategy.position_avg_price + stopPoints)
+
+plot(basis, "Basis", color=color.gray)
+plot(upperRed, "Upper red 3.618", color=color.red)
+plot(lowerRed, "Lower red 3.618", color=color.red)
+plotshape(buySignal, title="BUY", text="BUY", style=shape.labelup, location=location.belowbar, color=color.new(color.green, 0), textcolor=color.white)
+plotshape(sellSignal, title="SELL", text="SELL", style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 0), textcolor=color.white)
+
+alertcondition(buySignal, "Phoenix BUY", "Phoenix BUY: lower red band touch + WT oversold/cross")
+alertcondition(sellSignal, "Phoenix SELL", "Phoenix SELL: upper red band touch + WT overbought/cross")
