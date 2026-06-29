@@ -94,6 +94,11 @@ if (Test-Path $eaPatch) {
   & pwsh -NoProfile -ExecutionPolicy Bypass -File $eaPatch
 }
 
+$tightPatch = "scripts/tighten-public-london-buy-filter.ps1"
+if (Test-Path $tightPatch) {
+  & pwsh -NoProfile -ExecutionPolicy Bypass -File $tightPatch
+}
+
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_set_override_forced=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_intraday_frequency_profile=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_target_entries_per_day=2-3"
