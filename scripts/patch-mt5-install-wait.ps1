@@ -4,6 +4,16 @@ Set-StrictMode -Version Latest
 $reports = Join-Path (Resolve-Path ".").Path "reports"
 New-Item -ItemType Directory -Force -Path $reports | Out-Null
 
+$signalPatch = "scripts/patch-public-signal-timeframes.ps1"
+if (Test-Path $signalPatch) {
+  & pwsh -NoProfile -ExecutionPolicy Bypass -File $signalPatch
+}
+
+$orderPatch = "scripts/patch-public-order-execution.ps1"
+if (Test-Path $orderPatch) {
+  & pwsh -NoProfile -ExecutionPolicy Bypass -File $orderPatch
+}
+
 $runner = "scripts/run-public-history-backtest.ps1"
 if (!(Test-Path $runner)) { throw "Runner not found: $runner" }
 
@@ -52,4 +62,6 @@ $txt = $txt.Replace($oldThrow, $newThrow)
 Set-Content -Path $runner -Value $txt -Encoding UTF8
 
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "mt5_install_wait_patch=true"
-Write-Host "MT5 installer wait patch applied."
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_direct_signal_patch_step=true"
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_direct_order_patch_step=true"
+Write-Host "MT5 installer wait patch and direct public runtime patches applied."
