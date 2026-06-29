@@ -1,0 +1,160 @@
+//@version=5
+strategy("XAUUSD Gold Sniper Strategy v1 - Backtestable", overlay=true, initial_capital=10000, currency=currency.USD, pyramiding=0, commission_type=strategy.commission.percent, commission_value=0.01, slippage=2, process_orders_on_close=true, calc_on_every_tick=false, max_labels_count=500)
+
+// ============================================================================
+// XAUUSD / GOLD intraday strategy converted for TradingView backtesting.
+// Core stack: London/NY sessions, H1/H4 trend bias, EMA/VWAP, ADX/RSI/MACD,
+// liquidity sweep / reclaim / breakout, ATR structure SL, RR exits and alerts.
+// ============================================================================
+
+// ----- Inputs
+tradeSessionLondon = input.session("0800-1200", "London session")
+tradeSessionNY     = input.session("1300-1700", "New York session")
+useLondon          = input.bool(true, "Trade London")
+useNY              = input.bool(true, "Trade New York")
+blockLateNY        = input.bool(true, "Block NY after 15:00")
+
+emaFastLen         = input.int(20, "Fast EMA", minval=1)
+emaBiasLen         = input.int(50, "HTF bias EMA", minval=1)
+atrLen             = input.int(14, "ATR length", minval=1)
+adxLen             = input.int(14, "ADX length", minval=1)
+adxSmooth          = input.int(14, "ADX smoothing", minval=1)
+minAdx             = input.float(12.0, "Minimum ADX", minval=0.0, step=0.5)
+rsiLen             = input.int(14, "RSI length", minval=1)
+volLen             = input.int(20, "Volume SMA length", minval=1)
+volMult            = input.float(1.05, "Volume impulse multiplier", minval=0.1, step=0.05)
+swingLen           = input.int(10, "Liquidity swing lookback", minval=2)
+minScore           = input.int(6, "Minimum score / 10", minval=1, maxval=10)
+minBarsBetween     = input.int(8, "Minimum bars between entries", minval=1)
+
+slAtrMult          = input.float(1.5, "ATR stop multiplier", minval=0.1, step=0.1)
+useStructureSL     = input.bool(true, "Use structure + ATR stop")
+tp1RR              = input.float(1.0, "TP1 RR", minval=0.1, step=0.1)
+tp2RR              = input.float(2.0, "TP2 RR", minval=0.1, step=0.1)
+tp1Qty             = input.float(50, "TP1 quantity %", minval=1, maxval=99)
+showLabels         = input.bool(true, "Show entry labels")
+
+// ----- Sessions
+inLondon = useLondon and not na(time(timeframe.period, tradeSessionLondon))
+inNY     = useNY and not na(time(timeframe.period, tradeSessionNY))
+nyLate   = inNY and hour(time) >= 15
+inSession = (inLondon or inNY) and not (blockLateNY and nyLate)
+
+// ----- Indicators
+emaFast = ta.ema(close, emaFastLen)
+vwapVal = ta.vwap(hlc3)
+atr = ta.atr(atrLen)
+rsi = ta.rsi(close, rsiLen)
+[macdLine, macdSignal, _] = ta.macd(close, 12, 26, 9)
+[plusDI, minusDI, adx] = ta.dmi(adxLen, adxSmooth)
+volSma = ta.sma(volume, volLen)
+volumeImpulse = volume > volSma * volMult
+
+h1Ema = request.security(syminfo.tickerid, "60", ta.ema(close, emaBiasLen), barmerge.gaps_off, barmerge.lookahead_off)
+h4Ema = request.security(syminfo.tickerid, "240", ta.ema(close, emaBiasLen), barmerge.gaps_off, barmerge.lookahead_off)
+h1Close = request.security(syminfo.tickerid, "60", close, barmerge.gaps_off, barmerge.lookahead_off)
+h4Close = request.security(syminfo.tickerid, "240", close, barmerge.gaps_off, barmerge.lookahead_off)
+
+h1Bull = h1Close > h1Ema
+h4Bull = h4Close > h4Ema
+h1Bear = h1Close < h1Ema
+h4Bear = h4Close < h4Ema
+
+// ----- Liquidity / market-structure proxies
+prevHigh = ta.highest(high[1], swingLen)
+prevLow  = ta.lowest(low[1], swingLen)
+
+longSweepReclaim  = low < prevLow and close > prevLow
+shortSweepReclaim = high > prevHigh and close < prevHigh
+longBreakout      = close > prevHigh and close > open
+shortBreakout     = close < prevLow and close < open
+longVwapReclaim   = low < vwapVal and close > vwapVal
+shortVwapReclaim  = high > vwapVal and close < vwapVal
+bullFvg           = low > high[2]
+bearFvg           = high < low[2]
+
+// ----- Score model /10
+longScore = 0
+longScore += h1Bull ? 2 : 0
+longScore += h4Bull ? 1 : 0
+longScore += close > emaFast ? 1 : 0
+longScore += close > vwapVal ? 1 : 0
+longScore += adx >= minAdx and plusDI > minusDI ? 1 : 0
+longScore += rsi > 50 ? 1 : 0
+longScore += macdLine > macdSignal ? 1 : 0
+longScore += (longSweepReclaim or longBreakout or longVwapReclaim) ? 1 : 0
+longScore += (volumeImpulse or bullFvg) ? 1 : 0
+
+shortScore = 0
+shortScore += h1Bear ? 2 : 0
+shortScore += h4Bear ? 1 : 0
+shortScore += close < emaFast ? 1 : 0
+shortScore += close < vwapVal ? 1 : 0
+shortScore += adx >= minAdx and minusDI > plusDI ? 1 : 0
+shortScore += rsi < 50 ? 1 : 0
+shortScore += macdLine < macdSignal ? 1 : 0
+shortScore += (shortSweepReclaim or shortBreakout or shortVwapReclaim) ? 1 : 0
+shortScore += (volumeImpulse or bearFvg) ? 1 : 0
+
+// ----- Anti-chase filters based on recent public XAU tests
+emaDistanceAtr = atr > 0 ? math.abs(close - emaFast) / atr : 0.0
+weakLondonBuyChase  = inLondon and longScore <= 5 and close > emaFast and emaDistanceAtr > 2.20
+weakLondonSellChase = inLondon and shortScore <= 5 and close < emaFast and emaDistanceAtr > 2.20
+
+var int lastEntryBar = na
+canTradeByCooldown = na(lastEntryBar) or bar_index - lastEntryBar >= minBarsBetween
+flat = strategy.position_size == 0
+
+longSignal = flat and inSession and canTradeByCooldown and longScore >= minScore and not weakLondonBuyChase
+shortSignal = flat and inSession and canTradeByCooldown and shortScore >= minScore and not weakLondonSellChase
+
+// Prefer the highest score if both sides trigger on the same bar.
+enterLong = longSignal and (not shortSignal or longScore > shortScore)
+enterShort = shortSignal and (not longSignal or shortScore > longScore)
+
+// ----- Risk model
+longAtrSL = close - atr * slAtrMult
+longStructSL = ta.lowest(low, swingLen)
+longSL = useStructureSL ? math.min(longAtrSL, longStructSL) : longAtrSL
+longRisk = close - longSL
+longTP1 = close + longRisk * tp1RR
+longTP2 = close + longRisk * tp2RR
+
+shortAtrSL = close + atr * slAtrMult
+shortStructSL = ta.highest(high, swingLen)
+shortSL = useStructureSL ? math.max(shortAtrSL, shortStructSL) : shortAtrSL
+shortRisk = shortSL - close
+shortTP1 = close - shortRisk * tp1RR
+shortTP2 = close - shortRisk * tp2RR
+
+validLongRisk = longRisk > syminfo.mintick
+validShortRisk = shortRisk > syminfo.mintick
+
+if enterLong and validLongRisk
+    strategy.entry("LONG", strategy.long, comment="BUY score=" + str.tostring(longScore))
+    strategy.exit("LONG TP1", "LONG", qty_percent=tp1Qty, stop=longSL, limit=longTP1)
+    strategy.exit("LONG TP2", "LONG", qty_percent=100 - tp1Qty, stop=longSL, limit=longTP2)
+    lastEntryBar := bar_index
+    if showLabels
+        label.new(bar_index, low, "BUY\nscore " + str.tostring(longScore) + "/10", style=label.style_label_up, textcolor=color.white, color=color.new(color.green, 0))
+
+if enterShort and validShortRisk
+    strategy.entry("SHORT", strategy.short, comment="SELL score=" + str.tostring(shortScore))
+    strategy.exit("SHORT TP1", "SHORT", qty_percent=tp1Qty, stop=shortSL, limit=shortTP1)
+    strategy.exit("SHORT TP2", "SHORT", qty_percent=100 - tp1Qty, stop=shortSL, limit=shortTP2)
+    lastEntryBar := bar_index
+    if showLabels
+        label.new(bar_index, high, "SELL\nscore " + str.tostring(shortScore) + "/10", style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 0))
+
+// ----- Visuals
+plot(emaFast, "EMA fast", color=color.orange)
+plot(vwapVal, "VWAP", color=color.blue)
+plot(prevHigh, "Liquidity high", color=color.new(color.red, 70), style=plot.style_linebr)
+plot(prevLow, "Liquidity low", color=color.new(color.green, 70), style=plot.style_linebr)
+
+plotshape(enterLong, title="BUY signal", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text="BUY")
+plotshape(enterShort, title="SELL signal", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text="SELL")
+
+// ----- Alerts
+alertcondition(enterLong, title="XAU BUY", message="XAUUSD BUY strategy signal. Score={{plot_0}}")
+alertcondition(enterShort, title="XAU SELL", message="XAUUSD SELL strategy signal.")
