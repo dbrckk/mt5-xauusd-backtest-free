@@ -1,0 +1,129 @@
+name: PHOENIX PINE PUBLIC BACKTEST
+
+on:
+  workflow_dispatch:
+    inputs:
+      period:
+        description: "MT5 timeframe"
+        required: true
+        default: "M15"
+        type: string
+      from_date:
+        description: "Backtest start date YYYY.MM.DD"
+        required: true
+        default: "2026.06.09"
+        type: string
+      to_date:
+        description: "Backtest end date YYYY.MM.DD"
+        required: true
+        default: "2026.06.14"
+        type: string
+      deposit:
+        description: "Initial deposit"
+        required: true
+        default: "10000"
+        type: string
+      leverage:
+        description: "Leverage"
+        required: true
+        default: "1:100"
+        type: string
+      model:
+        description: "0=Every tick"
+        required: true
+        default: "0"
+        type: string
+      timeout_minutes:
+        description: "Timeout minutes"
+        required: true
+        default: "180"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  phoenix-pine-public:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    env:
+      BT_SYMBOL: XAU_PUBLIC
+      BT_PERIOD: ${{ inputs.period }}
+      BT_FROM_DATE: ${{ inputs.from_date }}
+      BT_TO_DATE: ${{ inputs.to_date }}
+      BT_DEPOSIT: ${{ inputs.deposit }}
+      BT_LEVERAGE: ${{ inputs.leverage }}
+      BT_MODEL: ${{ inputs.model }}
+      BT_TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
+      PUBLIC_FETCH_TIMEOUT_SECONDS: "20"
+      PUBLIC_FETCH_RETRIES: "2"
+      PUBLIC_MAX_DOWNLOAD_SECONDS: "720"
+      PUBLIC_MIN_REQUIRED_BARS: "700"
+      MT5_LOGIN: ${{ secrets.MT5_LOGIN }}
+      MT5_PASSWORD: ${{ secrets.MT5_PASSWORD }}
+      MT5_SERVER: ${{ secrets.MT5_SERVER }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare reports
+        shell: pwsh
+        run: |
+          if (Test-Path reports) { Remove-Item reports -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path reports | Out-Null
+          Set-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "PHOENIX_PINE_PUBLIC_BACKTEST"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "workflow=phoenix-pine-public-backtest.yml"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "run_number=${{ github.run_number }}"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "sha=${{ github.sha }}"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "artifact_name=PHOENIX-PINE-PUBLIC-${{ github.run_number }}-${{ github.sha }}"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "strategy_source=MQL5/Experts/PhoenixPineStrategy_XAU_PUBLIC.mq5"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "pine_conversion=phoenix_bbands_red_3618_wavetrend_0_100"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "input_period=${{ inputs.period }}"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "input_from_date=${{ inputs.from_date }}"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "input_to_date=${{ inputs.to_date }}"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "input_deposit=${{ inputs.deposit }}"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "public_fetch_timeout_seconds=$env:PUBLIC_FETCH_TIMEOUT_SECONDS"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "public_fetch_retries=$env:PUBLIC_FETCH_RETRIES"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "public_max_download_seconds=$env:PUBLIC_MAX_DOWNLOAD_SECONDS"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "public_min_required_bars=$env:PUBLIC_MIN_REQUIRED_BARS"
+
+      - name: Install Phoenix Pine EA into public runner slot
+        shell: pwsh
+        run: |
+          $source = "MQL5/Experts/PhoenixPineStrategy_XAU_PUBLIC.mq5"
+          $target = "MQL5/Experts/QuantumQueenStyle_XAU_Grid_PRO_V17_10K_PROFITASYMMETRY.mq5"
+          if (!(Test-Path $source)) { throw "Phoenix Pine EA source not found: $source" }
+          Copy-Item $source $target -Force
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "runner_ea_slot=$target"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "phoenix_ea_installed=true"
+
+      - name: Patch MT5 installer wait
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/patch-mt5-install-wait.ps1
+
+      - name: Run Phoenix Pine public backtest
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-public-history-backtest.ps1 2>&1 | Tee-Object -FilePath reports/run_public_backtest_step.log
+          $code = $LASTEXITCODE
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "run_public_backtest_exit_code=$code"
+          if ($code -ne 0) { exit $code }
+
+      - name: Analyze public artifact
+        if: always()
+        shell: pwsh
+        run: |
+          Compress-Archive -Path reports/* -DestinationPath reports/_analysis_input.zip -Force
+          python scripts/analyze-public-artifact.py reports/_analysis_input.zip | Tee-Object -FilePath reports/PUBLIC_BACKTEST_ANALYSIS.json
+          python scripts/analyze-public-trade-quality.py reports --deposit ${{ inputs.deposit }} | Tee-Object -FilePath reports/PUBLIC_TRADE_QUALITY.json
+
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PHOENIX-PINE-PUBLIC-${{ github.run_number }}-${{ github.sha }}
+          path: reports/**
+          if-no-files-found: error
+          retention-days: 14
