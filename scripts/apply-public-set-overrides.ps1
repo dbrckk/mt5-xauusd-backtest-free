@@ -41,6 +41,26 @@ $txt = $txt.Replace('"InpMaxATRAccelerationRatio=1.20"', '"InpMaxATRAcceleration
 $txt = $txt.Replace('"InpMaxATRAccelerationRatio=1.00"', '"InpMaxATRAccelerationRatio=9.99"')
 $txt = $txt.Replace('"InpMaxATRAccelerationRatio=0.85"', '"InpMaxATRAccelerationRatio=9.99"')
 
+# V21 warmup fix: download extra history before the official tester start date.
+# The tester keeps FromDate=$from, but the imported custom symbol receives earlier bars.
+$oldDownload = 'python (Join-Path $repo "scripts\download_public_xau_m1.py") $from $to $csvPath 2>&1 | Tee-Object -FilePath (Join-Path $reportsRoot "download_public_history.log")'
+$newDownload = @'
+$historyFrom = $from
+try {
+  $fromDateObj = [datetime]::ParseExact($from, 'yyyy.MM.dd', [System.Globalization.CultureInfo]::InvariantCulture)
+  $historyFrom = $fromDateObj.AddDays(-21).ToString('yyyy.MM.dd')
+} catch {
+  Write-Host "Warmup date parse failed; using requested start date only: $from"
+}
+Set-Content -Path (Join-Path $reportsRoot "public_history_requested_range.txt") -Value "requested_from=$from`nrequested_to=$to`nhistory_from=$historyFrom`nhistory_to=$to`nwarmup_days=21" -Encoding UTF8
+Add-Content -Path (Join-Path $reportsRoot "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_warmup_history_download=true"
+Add-Content -Path (Join-Path $reportsRoot "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_warmup_history_from=$historyFrom"
+python (Join-Path $repo "scripts\download_public_xau_m1.py") $historyFrom $to $csvPath 2>&1 | Tee-Object -FilePath (Join-Path $reportsRoot "download_public_history.log")
+'@
+if ($txt.Contains($oldDownload) -and -not $txt.Contains('public_warmup_history_download=true')) {
+  $txt = $txt.Replace($oldDownload, $newDownload)
+}
+
 $items = @()
 $items += 'InpMacroTF=16385'
 $items += 'InpTrendTF=16385'
@@ -109,4 +129,4 @@ Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "pub
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_start_end_session_locked=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_duplicate_thresholds_normalized=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_20_30_point_profile=true"
-Write-Host "Forced public intraday frequency tester set overrides."
+Write-Host "Forced public intraday frequency tester set overrides with V21 warmup history."
