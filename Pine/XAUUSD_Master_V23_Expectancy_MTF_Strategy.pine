@@ -1,0 +1,280 @@
+//@version=5
+strategy("XAUUSD Master V23 - Expectancy MTF Strategy", overlay=true, pyramiding=0, process_orders_on_close=true, calc_on_every_tick=false, initial_capital=10000, commission_type=strategy.commission.percent, commission_value=0.0, max_labels_count=500, max_lines_count=500)
+
+// -----------------------------------------------------------------------------
+// XAUUSD Master V23 - Expectancy MTF Strategy
+// Design change vs V22:
+// - M5 is the only entry timeframe.
+// - M15/M30/H1 confirm direction.
+// - H2/H4 act as trend filters only, never direct entries.
+// - Break-even is delayed/optional to avoid artificial micro-winrate.
+// - SL is reduced and TP is increased to improve expectancy.
+// Recommended chart: XAUUSD/GOLD 5 minutes.
+// -----------------------------------------------------------------------------
+
+groupGeneral = "General"
+profile = input.string("V23 balanced", "Profile", options=["V23 balanced", "V23 high winrate", "V23 expectancy", "Custom"], group=groupGeneral)
+maxTradesPerDay = input.int(4, "Max trades/day", minval=1, maxval=6, group=groupGeneral)
+minCooldownMin = input.int(90, "Cooldown minutes", minval=0, maxval=1440, group=groupGeneral)
+showLabels = input.bool(true, "Show labels", group=groupGeneral)
+showDashboard = input.bool(true, "Show dashboard", group=groupGeneral)
+
+// ===== Signal parameters =====
+groupSignal = "Signal engine"
+fastLen = input.int(9, "Fast EMA", minval=1, group=groupSignal)
+slowLen = input.int(21, "Slow EMA", minval=2, group=groupSignal)
+trendLen = input.int(200, "Trend EMA", minval=20, group=groupSignal)
+rsiLen = input.int(14, "RSI length", minval=2, group=groupSignal)
+atrLen = input.int(14, "ATR length", minval=2, group=groupSignal)
+volLen = input.int(20, "Volume SMA", minval=2, group=groupSignal)
+volMult = input.float(0.85, "Volume > SMA x", step=0.05, group=groupSignal)
+diLen = input.int(14, "DI length", minval=2, group=groupSignal)
+adxSmooth = input.int(14, "ADX smoothing", minval=2, group=groupSignal)
+minADX = input.float(18.0, "Min ADX", step=0.5, group=groupSignal)
+minBodyRatio = input.float(0.38, "Min body/range", step=0.01, group=groupSignal)
+minAtrPct = input.float(0.035, "Min ATR %", step=0.005, group=groupSignal)
+maxAtrPct = input.float(0.34, "Max ATR %", step=0.01, group=groupSignal)
+
+// ===== Confirmation parameters =====
+groupConfirm = "MTF confirmation"
+requireH1 = input.bool(true, "Require H1 alignment", group=groupConfirm)
+minConfirmCustom = input.int(3, "Custom min confirmations M15/M30/H1", minval=1, maxval=3, group=groupConfirm)
+blockH2Opposite = input.bool(true, "Block if H2 opposite", group=groupConfirm)
+blockH4Opposite = input.bool(true, "Block if H4 opposite", group=groupConfirm)
+
+// ===== RSI bands =====
+groupRSI = "RSI"
+longRsiMin = input.float(51.0, "Long RSI min", step=0.5, group=groupRSI)
+longRsiMax = input.float(64.0, "Long RSI max", step=0.5, group=groupRSI)
+shortRsiMin = input.float(36.0, "Short RSI min", step=0.5, group=groupRSI)
+shortRsiMax = input.float(49.0, "Short RSI max", step=0.5, group=groupRSI)
+
+// ===== Session =====
+groupSession = "Session"
+useSession = input.bool(true, "Use London/NY session", group=groupSession)
+sessionStartHour = input.int(8, "Start hour", minval=0, maxval=23, group=groupSession)
+sessionEndHour = input.int(18, "End hour", minval=0, maxval=24, group=groupSession)
+blockFridayLate = input.bool(true, "Block Friday after 16:00", group=groupSession)
+
+// ===== Exits =====
+groupExit = "Exits"
+customTP = input.float(1.60, "Custom TP ATR", step=0.05, minval=0.1, group=groupExit)
+customSL = input.float(0.90, "Custom SL ATR", step=0.05, minval=0.1, group=groupExit)
+customScore = input.float(82.0, "Custom min score", step=1.0, minval=0, maxval=120, group=groupExit)
+useBreakEvenInput = input.bool(true, "Use delayed BE", group=groupExit)
+customBETrigger = input.float(1.15, "Custom BE trigger ATR", step=0.05, minval=0.1, group=groupExit)
+beOffsetATR = input.float(0.03, "BE offset ATR", step=0.01, minval=0.0, group=groupExit)
+useTimeProfitExit = input.bool(true, "Use time profit exit", group=groupExit)
+maxHoldBars = input.int(24, "Max hold M5 bars", minval=1, maxval=300, group=groupExit)
+useWeaknessExit = input.bool(true, "Cut if M5 trend flips after delay", group=groupExit)
+weaknessBars = input.int(12, "Weakness delay bars", minval=3, maxval=100, group=groupExit)
+
+// ===== Profile values =====
+tpATR = profile == "V23 high winrate" ? 1.25 : profile == "V23 expectancy" ? 2.00 : profile == "V23 balanced" ? 1.60 : customTP
+slATR = profile == "V23 high winrate" ? 0.75 : profile == "V23 expectancy" ? 1.00 : profile == "V23 balanced" ? 0.90 : customSL
+minScore = profile == "V23 high winrate" ? 88.0 : profile == "V23 expectancy" ? 84.0 : profile == "V23 balanced" ? 82.0 : customScore
+minConfirm = profile == "V23 high winrate" ? 3 : profile == "V23 expectancy" ? 2 : profile == "V23 balanced" ? 3 : minConfirmCustom
+beTriggerATR = profile == "V23 high winrate" ? 1.00 : profile == "V23 expectancy" ? 1.35 : profile == "V23 balanced" ? 1.15 : customBETrigger
+useBreakEven = profile == "V23 expectancy" ? false : useBreakEvenInput
+
+// ===== Utilities =====
+f_session_ok() =>
+    h = hour(time)
+    dow = dayofweek(time)
+    weekday = dow != dayofweek.saturday and dow != dayofweek.sunday
+    inHour = h >= sessionStartHour and h < sessionEndHour
+    fridayOk = not blockFridayLate or dow != dayofweek.friday or h < 16
+    not useSession or (weekday and inHour and fridayOk)
+
+f_trend_state() =>
+    fast = ta.ema(close, fastLen)
+    slow = ta.ema(close, slowLen)
+    ema200 = ta.ema(close, trendLen)
+    slope = ema200 - ema200[3]
+    rsi = ta.rsi(close, rsiLen)
+    [diPlus, diMinus, adx] = ta.dmi(diLen, adxSmooth)
+    bull = close > ema200 and fast > slow and slope > 0 and rsi > 50 and diPlus > diMinus and adx >= minADX
+    bear = close < ema200 and fast < slow and slope < 0 and rsi < 50 and diMinus > diPlus and adx >= minADX
+    strength = 0.0
+    strength += math.abs(fast - slow) / close * 1000.0
+    strength += math.abs(slope) / close * 1000.0
+    strength += adx / 10.0
+    state = bull ? 1 : bear ? -1 : 0
+    [state, strength]
+
+// ===== Higher timeframe trend state =====
+[st15, str15] = request.security(syminfo.tickerid, "15", f_trend_state(), barmerge.gaps_off, barmerge.lookahead_off)
+[st30, str30] = request.security(syminfo.tickerid, "30", f_trend_state(), barmerge.gaps_off, barmerge.lookahead_off)
+[st60, str60] = request.security(syminfo.tickerid, "60", f_trend_state(), barmerge.gaps_off, barmerge.lookahead_off)
+[st120, str120] = request.security(syminfo.tickerid, "120", f_trend_state(), barmerge.gaps_off, barmerge.lookahead_off)
+[st240, str240] = request.security(syminfo.tickerid, "240", f_trend_state(), barmerge.gaps_off, barmerge.lookahead_off)
+
+// ===== M5 entry signal =====
+fast = ta.ema(close, fastLen)
+slow = ta.ema(close, slowLen)
+ema200 = ta.ema(close, trendLen)
+emaSlope = ema200 - ema200[3]
+rsi = ta.rsi(close, rsiLen)
+atr = ta.atr(atrLen)
+atrPct = close != 0.0 ? atr / close * 100.0 : 0.0
+[diPlus, diMinus, adx] = ta.dmi(diLen, adxSmooth)
+volOk = volume > ta.sma(volume, volLen) * volMult
+rng = high - low
+body = math.abs(close - open)
+bodyOk = rng > 0.0 and body / rng >= minBodyRatio
+atrOk = atrPct >= minAtrPct and atrPct <= maxAtrPct
+sessionOk = f_session_ok()
+
+breakLong = close > ta.highest(high, 3)[1]
+breakShort = close < ta.lowest(low, 3)[1]
+pullbackLong = close > fast and fast > slow and low <= fast and close > open
+pullbackShort = close < fast and fast < slow and high >= fast and close < open
+longTrigger = breakLong or pullbackLong or ta.crossover(fast, slow)
+shortTrigger = breakShort or pullbackShort or ta.crossunder(fast, slow)
+
+m5Long = close > ema200 and fast > slow and emaSlope > 0 and rsi > longRsiMin and rsi < longRsiMax and diPlus > diMinus
+m5Short = close < ema200 and fast < slow and emaSlope < 0 and rsi > shortRsiMin and rsi < shortRsiMax and diMinus > diPlus
+
+longConfirm = (st15 == 1 ? 1 : 0) + (st30 == 1 ? 1 : 0) + (st60 == 1 ? 1 : 0)
+shortConfirm = (st15 == -1 ? 1 : 0) + (st30 == -1 ? 1 : 0) + (st60 == -1 ? 1 : 0)
+longHTFOK = longConfirm >= minConfirm and (not requireH1 or st60 == 1) and (not blockH2Opposite or st120 >= 0) and (not blockH4Opposite or st240 >= 0)
+shortHTFOK = shortConfirm >= minConfirm and (not requireH1 or st60 == -1) and (not blockH2Opposite or st120 <= 0) and (not blockH4Opposite or st240 <= 0)
+
+longScore = 0.0
+longScore += longTrigger ? 18.0 : 0.0
+longScore += m5Long ? 18.0 : 0.0
+longScore += volOk ? 8.0 : 0.0
+longScore += bodyOk ? 7.0 : 0.0
+longScore += atrOk ? 7.0 : 0.0
+longScore += adx >= minADX ? 8.0 : 0.0
+longScore += longConfirm * 8.0
+longScore += st120 == 1 ? 5.0 : 0.0
+longScore += st240 == 1 ? 5.0 : 0.0
+longScore += breakLong ? 6.0 : 0.0
+
+shortScore = 0.0
+shortScore += shortTrigger ? 18.0 : 0.0
+shortScore += m5Short ? 18.0 : 0.0
+shortScore += volOk ? 8.0 : 0.0
+shortScore += bodyOk ? 7.0 : 0.0
+shortScore += atrOk ? 7.0 : 0.0
+shortScore += adx >= minADX ? 8.0 : 0.0
+shortScore += shortConfirm * 8.0
+shortScore += st120 == -1 ? 5.0 : 0.0
+shortScore += st240 == -1 ? 5.0 : 0.0
+shortScore += breakShort ? 6.0 : 0.0
+
+rawLong = sessionOk and longTrigger and m5Long and longHTFOK and volOk and bodyOk and atrOk and adx >= minADX and longScore >= minScore
+rawShort = sessionOk and shortTrigger and m5Short and shortHTFOK and volOk and bodyOk and atrOk and adx >= minADX and shortScore >= minScore
+
+// ===== Trade limiter =====
+var int tradesToday = 0
+var int lastEntryMs = na
+var float entryATR = na
+var float entryScore = na
+var int entryBar = na
+var string entryMode = ""
+
+newDay = ta.change(time("D"))
+if newDay
+    tradesToday := 0
+
+cooldownOk = na(lastEntryMs) or time - lastEntryMs >= minCooldownMin * 60 * 1000
+canTrade = strategy.position_size == 0 and tradesToday < maxTradesPerDay and cooldownOk
+longSignal = rawLong and canTrade
+shortSignal = rawShort and canTrade
+
+if longSignal
+    strategy.entry("BUY", strategy.long, comment="BUY V23 " + str.tostring(longScore, "#.0"))
+    tradesToday += 1
+    lastEntryMs := time
+    entryATR := atr
+    entryScore := longScore
+    entryBar := bar_index
+    entryMode := "BUY"
+    alert("XAUUSD V23 BUY | score=" + str.tostring(longScore, "#.0") + " | TP=" + str.tostring(tpATR) + " | SL=" + str.tostring(slATR), alert.freq_once_per_bar_close)
+
+if shortSignal
+    strategy.entry("SELL", strategy.short, comment="SELL V23 " + str.tostring(shortScore, "#.0"))
+    tradesToday += 1
+    lastEntryMs := time
+    entryATR := atr
+    entryScore := shortScore
+    entryBar := bar_index
+    entryMode := "SELL"
+    alert("XAUUSD V23 SELL | score=" + str.tostring(shortScore, "#.0") + " | TP=" + str.tostring(tpATR) + " | SL=" + str.tostring(slATR), alert.freq_once_per_bar_close)
+
+// ===== Exits =====
+atrExit = na(entryATR) ? atr : entryATR
+longTP = strategy.position_avg_price + atrExit * tpATR
+longSLBase = strategy.position_avg_price - atrExit * slATR
+shortTP = strategy.position_avg_price - atrExit * tpATR
+shortSLBase = strategy.position_avg_price + atrExit * slATR
+longBE = useBreakEven and strategy.position_size > 0 and high >= strategy.position_avg_price + atrExit * beTriggerATR
+shortBE = useBreakEven and strategy.position_size < 0 and low <= strategy.position_avg_price - atrExit * beTriggerATR
+longSL = longBE ? math.max(longSLBase, strategy.position_avg_price + atrExit * beOffsetATR) : longSLBase
+shortSL = shortBE ? math.min(shortSLBase, strategy.position_avg_price - atrExit * beOffsetATR) : shortSLBase
+
+if strategy.position_size > 0
+    strategy.exit("BUY EXIT", "BUY", stop=longSL, limit=longTP)
+if strategy.position_size < 0
+    strategy.exit("SELL EXIT", "SELL", stop=shortSL, limit=shortTP)
+
+holdBars = not na(entryBar) ? bar_index - entryBar : 0
+if useTimeProfitExit and strategy.position_size > 0 and holdBars >= maxHoldBars and close > strategy.position_avg_price
+    strategy.close("BUY", comment="TIME PROFIT")
+if useTimeProfitExit and strategy.position_size < 0 and holdBars >= maxHoldBars and close < strategy.position_avg_price
+    strategy.close("SELL", comment="TIME PROFIT")
+
+weakLong = useWeaknessExit and strategy.position_size > 0 and holdBars >= weaknessBars and (fast < slow or st15 == -1)
+weakShort = useWeaknessExit and strategy.position_size < 0 and holdBars >= weaknessBars and (fast > slow or st15 == 1)
+if weakLong and close < strategy.position_avg_price
+    strategy.close("BUY", comment="WEAKNESS CUT")
+if weakShort and close > strategy.position_avg_price
+    strategy.close("SELL", comment="WEAKNESS CUT")
+
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    entryATR := na
+    entryScore := na
+    entryBar := na
+    entryMode := ""
+
+// ===== Visuals =====
+plot(fast, "EMA 9", color=color.new(color.teal, 0))
+plot(slow, "EMA 21", color=color.new(color.orange, 0))
+plot(ema200, "EMA 200", color=color.new(color.gray, 0), linewidth=2)
+plot(strategy.position_size > 0 ? longTP : na, "Long TP", color=color.new(color.green, 0), style=plot.style_linebr)
+plot(strategy.position_size > 0 ? longSL : na, "Long SL", color=color.new(color.red, 0), style=plot.style_linebr)
+plot(strategy.position_size < 0 ? shortTP : na, "Short TP", color=color.new(color.green, 0), style=plot.style_linebr)
+plot(strategy.position_size < 0 ? shortSL : na, "Short SL", color=color.new(color.red, 0), style=plot.style_linebr)
+
+if showLabels and longSignal
+    label.new(bar_index, low, "BUY V23\n" + str.tostring(longScore, "#.0") + "\nC" + str.tostring(longConfirm), style=label.style_label_up, color=color.new(color.green, 0), textcolor=color.white)
+if showLabels and shortSignal
+    label.new(bar_index, high, "SELL V23\n" + str.tostring(shortScore, "#.0") + "\nC" + str.tostring(shortConfirm), style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white)
+
+// ===== Dashboard =====
+var table dash = table.new(position.top_right, 2, 10, border_width=1)
+if showDashboard and barstate.islast
+    winrate = strategy.closedtrades > 0 ? strategy.wintrades / strategy.closedtrades * 100.0 : na
+    pf = strategy.grossloss != 0.0 ? strategy.grossprofit / math.abs(strategy.grossloss) : na
+    table.cell(dash, 0, 0, "XAU V23", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 1, 0, profile, text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 0, 1, "TP / SL")
+    table.cell(dash, 1, 1, str.tostring(tpATR) + " / " + str.tostring(slATR))
+    table.cell(dash, 0, 2, "Min score")
+    table.cell(dash, 1, 2, str.tostring(minScore, "#.0"))
+    table.cell(dash, 0, 3, "Confirm")
+    table.cell(dash, 1, 3, "L" + str.tostring(longConfirm) + " / S" + str.tostring(shortConfirm))
+    table.cell(dash, 0, 4, "H2/H4")
+    table.cell(dash, 1, 4, str.tostring(st120) + " / " + str.tostring(st240))
+    table.cell(dash, 0, 5, "Trades today")
+    table.cell(dash, 1, 5, str.tostring(tradesToday) + " / " + str.tostring(maxTradesPerDay))
+    table.cell(dash, 0, 6, "Closed")
+    table.cell(dash, 1, 6, str.tostring(strategy.closedtrades))
+    table.cell(dash, 0, 7, "Winrate")
+    table.cell(dash, 1, 7, na(winrate) ? "n/a" : str.tostring(winrate, "#.0") + "%")
+    table.cell(dash, 0, 8, "PF")
+    table.cell(dash, 1, 8, na(pf) ? "n/a" : str.tostring(pf, "#.00"))
+    table.cell(dash, 0, 9, "Score")
+    table.cell(dash, 1, 9, str.tostring(math.max(longScore, shortScore), "#.0"))
