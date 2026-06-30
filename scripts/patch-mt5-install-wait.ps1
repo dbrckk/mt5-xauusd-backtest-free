@@ -4,8 +4,6 @@ Set-StrictMode -Version Latest
 $reports = Join-Path (Resolve-Path ".").Path "reports"
 New-Item -ItemType Directory -Force -Path $reports | Out-Null
 
-# Force a one-month validation window at runtime.
-# The UI may still show old defaults, but the next backtest step reads these values through GITHUB_ENV.
 try {
   $toText = $env:BT_TO_DATE
   if ([string]::IsNullOrWhiteSpace($toText)) { $toText = "2026.06.21" }
@@ -25,8 +23,6 @@ try {
   throw
 }
 
-# Public Dukascopy is unstable when the 5 matrix jobs download ticks at the same time.
-# Stagger jobs so the current multiTF workflow behaves like a sequential safe runner.
 $period = $env:BT_PERIOD
 $delaySeconds = switch ($period) {
   "M15" { 0 }
@@ -38,29 +34,40 @@ $delaySeconds = switch ($period) {
 }
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_download_stagger_period=$period"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_download_stagger_seconds=$delaySeconds"
-if ($delaySeconds -gt 0) {
-  Start-Sleep -Seconds $delaySeconds
-}
+if ($delaySeconds -gt 0) { Start-Sleep -Seconds $delaySeconds }
 
 $signalPatch = "scripts/patch-public-signal-timeframes.ps1"
-if (Test-Path $signalPatch) {
-  & pwsh -NoProfile -ExecutionPolicy Bypass -File $signalPatch
-}
+if (Test-Path $signalPatch) { & pwsh -NoProfile -ExecutionPolicy Bypass -File $signalPatch }
 
 $orderPatch = "scripts/patch-public-order-execution.ps1"
-if (Test-Path $orderPatch) {
-  & pwsh -NoProfile -ExecutionPolicy Bypass -File $orderPatch
-}
+if (Test-Path $orderPatch) { & pwsh -NoProfile -ExecutionPolicy Bypass -File $orderPatch }
 
 $runner = "scripts/run-public-history-backtest.ps1"
 if (!(Test-Path $runner)) { throw "Runner not found: $runner" }
 
 $txt = Get-Content -Path $runner -Raw
 
-# Force faster public feed failure handling inside the generated runner.
 if ($txt.Contains('$env:PUBLIC_MIN_REQUIRED_BARS = "700"') -and -not $txt.Contains('public_fast_feed_timeout_runtime=true')) {
-  $fastFeed = '$env:PUBLIC_MIN_REQUIRED_BARS = "700"' + "`r`n" + '$env:PUBLIC_FETCH_TIMEOUT_SECONDS = "8"' + "`r`n" + '$env:PUBLIC_FETCH_RETRIES = "1"' + "`r`n" + 'Add-Content -Path (Join-Path $reportsRoot "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_fast_feed_timeout_runtime=true"'
+  $fastFeed = '$env:PUBLIC_MIN_REQUIRED_BARS = "700"' + "`r`n" + '$env:PUBLIC_FETCH_TIMEOUT_SECONDS = "15"' + "`r`n" + '$env:PUBLIC_FETCH_RETRIES = "2"' + "`r`n" + 'Add-Content -Path (Join-Path $reportsRoot "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_fast_feed_timeout_runtime=true"'
   $txt = $txt.Replace('$env:PUBLIC_MIN_REQUIRED_BARS = "700"', $fastFeed)
+}
+
+$oldRangePass = 'Add-Content -Path (Join-Path $reportsRoot "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_import_range_guard=passed"'
+$newRangePass = @'
+  $requiredLastDate = $toDateObj.Date
+  while ($requiredLastDate.DayOfWeek -eq [System.DayOfWeek]::Saturday -or $requiredLastDate.DayOfWeek -eq [System.DayOfWeek]::Sunday) {
+    $requiredLastDate = $requiredLastDate.AddDays(-1)
+  }
+  $requiredLastTime = $requiredLastDate.AddHours(16)
+  Add-Content -Path (Join-Path $reportsRoot "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_required_last_history_time=$($requiredLastTime.ToString('yyyy.MM.dd HH:mm'))"
+  if ($lastCsvTime -lt $requiredLastTime) {
+    throw "Imported public history does not cover the requested one-month window. last_csv_time=$($lastCsvTime.ToString('yyyy.MM.dd HH:mm')) required_last_time=$($requiredLastTime.ToString('yyyy.MM.dd HH:mm')) to=$to"
+  }
+  Add-Content -Path (Join-Path $reportsRoot "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_import_end_range_guard=passed"
+  Add-Content -Path (Join-Path $reportsRoot "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_import_range_guard=passed"
+'@
+if ($txt.Contains($oldRangePass) -and -not $txt.Contains('public_import_end_range_guard=passed')) {
+  $txt = $txt.Replace($oldRangePass, $newRangePass)
 }
 
 $oldInstall = 'if ($null -eq $terminal) { $p = Start-Process -FilePath $installer -ArgumentList "/auto" -PassThru; $p.WaitForExit(180000) | Out-Null; Start-Sleep -Seconds 25; Kill-MT5 }'
@@ -110,4 +117,5 @@ Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "pub
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_direct_order_patch_step=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_matrix_stagger_patch=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_one_month_runtime_patch=true"
-Write-Host "MT5 installer wait patch, one-month window, stagger, and direct public runtime patches applied."
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_one_month_end_guard_patch=true"
+Write-Host "MT5 installer wait patch, one-month window, end-range guard, stagger, and direct public runtime patches applied."
