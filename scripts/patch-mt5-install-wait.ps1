@@ -4,6 +4,27 @@ Set-StrictMode -Version Latest
 $reports = Join-Path (Resolve-Path ".").Path "reports"
 New-Item -ItemType Directory -Force -Path $reports | Out-Null
 
+# Force a one-month validation window at runtime.
+# The UI may still show old defaults, but the next backtest step reads these values through GITHUB_ENV.
+try {
+  $toText = $env:BT_TO_DATE
+  if ([string]::IsNullOrWhiteSpace($toText)) { $toText = "2026.06.21" }
+  $toDate = [datetime]::ParseExact($toText, "yyyy.MM.dd", [System.Globalization.CultureInfo]::InvariantCulture)
+  $fromDate = $toDate.AddDays(-31)
+  $forcedFrom = $fromDate.ToString("yyyy.MM.dd")
+  $forcedTo = $toDate.ToString("yyyy.MM.dd")
+  "BT_FROM_DATE=$forcedFrom" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+  "BT_TO_DATE=$forcedTo" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+  $env:BT_FROM_DATE = $forcedFrom
+  $env:BT_TO_DATE = $forcedTo
+  Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_forced_one_month_window=true"
+  Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_forced_from_date=$forcedFrom"
+  Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_forced_to_date=$forcedTo"
+} catch {
+  Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_forced_one_month_window=failed"
+  throw
+}
+
 # Public Dukascopy is unstable when the 5 matrix jobs download ticks at the same time.
 # Stagger jobs so the current multiTF workflow behaves like a sequential safe runner.
 $period = $env:BT_PERIOD
@@ -88,4 +109,5 @@ Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "mt5
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_direct_signal_patch_step=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_direct_order_patch_step=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_matrix_stagger_patch=true"
-Write-Host "MT5 installer wait patch, stagger, and direct public runtime patches applied."
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_one_month_runtime_patch=true"
+Write-Host "MT5 installer wait patch, one-month window, stagger, and direct public runtime patches applied."
