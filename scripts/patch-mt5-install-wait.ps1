@@ -8,18 +8,24 @@ try {
   $toText = $env:BT_TO_DATE
   if ([string]::IsNullOrWhiteSpace($toText)) { $toText = "2026.06.21" }
   $toDate = [datetime]::ParseExact($toText, "yyyy.MM.dd", [System.Globalization.CultureInfo]::InvariantCulture)
-  $fromDate = $toDate.AddDays(-31)
+  $forceDays = 31
+  if (-not [string]::IsNullOrWhiteSpace($env:PUBLIC_FORCE_DAYS)) {
+    $parsedDays = 0
+    if ([int]::TryParse($env:PUBLIC_FORCE_DAYS, [ref]$parsedDays) -and $parsedDays -gt 0) { $forceDays = $parsedDays }
+  }
+  $fromDate = $toDate.AddDays(-1 * $forceDays)
   $forcedFrom = $fromDate.ToString("yyyy.MM.dd")
   $forcedTo = $toDate.ToString("yyyy.MM.dd")
   "BT_FROM_DATE=$forcedFrom" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
   "BT_TO_DATE=$forcedTo" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
   $env:BT_FROM_DATE = $forcedFrom
   $env:BT_TO_DATE = $forcedTo
-  Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_forced_one_month_window=true"
+  Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_forced_window=true"
+  Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_forced_days=$forceDays"
   Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_forced_from_date=$forcedFrom"
   Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_forced_to_date=$forcedTo"
 } catch {
-  Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_forced_one_month_window=failed"
+  Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_forced_window=failed"
   throw
 }
 
@@ -32,6 +38,7 @@ $delaySeconds = switch ($period) {
   "H4"  { 4800 }
   default { 0 }
 }
+if ($env:PUBLIC_SINGLE_TIMEFRAME -eq "true") { $delaySeconds = 0 }
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_download_stagger_period=$period"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_download_stagger_seconds=$delaySeconds"
 if ($delaySeconds -gt 0) { Start-Sleep -Seconds $delaySeconds }
@@ -62,7 +69,7 @@ $newRangePass = @'
   $requiredLastTime = $requiredLastDate.AddHours(16)
   Add-Content -Path (Join-Path $reportsRoot "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_required_last_history_time=$($requiredLastTime.ToString('yyyy.MM.dd HH:mm'))"
   if ($lastCsvTime -lt $requiredLastTime) {
-    throw "Imported public history does not cover the requested one-month window. last_csv_time=$($lastCsvTime.ToString('yyyy.MM.dd HH:mm')) required_last_time=$($requiredLastTime.ToString('yyyy.MM.dd HH:mm')) to=$to"
+    throw "Imported public history does not cover the requested validation window. last_csv_time=$($lastCsvTime.ToString('yyyy.MM.dd HH:mm')) required_last_time=$($requiredLastTime.ToString('yyyy.MM.dd HH:mm')) to=$to"
   }
   Add-Content -Path (Join-Path $reportsRoot "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_import_end_range_guard=passed"
   Add-Content -Path (Join-Path $reportsRoot "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_import_range_guard=passed"
@@ -117,7 +124,7 @@ Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "mt5
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_direct_signal_patch_step=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_direct_order_patch_step=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_matrix_stagger_patch=true"
-Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_one_month_runtime_patch=true"
-Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_one_month_end_guard_patch=true"
-Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_one_month_end_guard_todate_parse_fix=true"
-Write-Host "MT5 installer wait patch, one-month window, end-range guard, stagger, and direct public runtime patches applied."
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_window_runtime_patch=true"
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_end_guard_patch=true"
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_end_guard_todate_parse_fix=true"
+Write-Host "MT5 installer wait patch, configurable validation window, end-range guard, stagger, and direct public runtime patches applied."
