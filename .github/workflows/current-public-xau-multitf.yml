@@ -109,6 +109,7 @@ jobs:
           Compress-Archive -Path reports/* -DestinationPath reports/_analysis_input.zip -Force
           python scripts/analyze-public-artifact.py reports/_analysis_input.zip | Tee-Object -FilePath reports/PUBLIC_BACKTEST_ANALYSIS.json
           python scripts/analyze-public-trade-quality.py reports --deposit ${{ inputs.deposit }} | Tee-Object -FilePath reports/PUBLIC_TRADE_QUALITY.json
+          python scripts/analyze-pine-strict-variants.py reports --deposit ${{ inputs.deposit }} | Tee-Object -FilePath reports/PINE_STRICT_VARIANTS_RUN.json
 
       - name: Upload artifact
         if: always()
