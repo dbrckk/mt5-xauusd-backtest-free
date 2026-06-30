@@ -46,7 +46,7 @@ foreach ($key in $replacements.Keys) {
   $txt = $txt.Replace($key, $replacements[$key])
 }
 
-# V22: download warmup + official validation range. Do not stop before FromDate.
+# V22+: download warmup + official validation range. Do not stop before FromDate.
 $oldDownload = 'python (Join-Path $repo "scripts\download_public_xau_m1.py") $from $to $csvPath 2>&1 | Tee-Object -FilePath (Join-Path $reportsRoot "download_public_history.log")'
 $newDownload = @'
 $historyFrom = $from
@@ -56,14 +56,21 @@ try {
 } catch {
   Write-Host "Warmup date parse failed; using requested start date only: $from"
 }
-$env:PUBLIC_MAX_HISTORY_DAYS = "60"
+$maxHistoryDays = if ([string]::IsNullOrWhiteSpace($env:PUBLIC_MAX_HISTORY_DAYS)) { "60" } else { $env:PUBLIC_MAX_HISTORY_DAYS }
+$maxDownloadSeconds = if ([string]::IsNullOrWhiteSpace($env:PUBLIC_MAX_DOWNLOAD_SECONDS)) { "2700" } else { $env:PUBLIC_MAX_DOWNLOAD_SECONDS }
+$fetchTimeout = if ([string]::IsNullOrWhiteSpace($env:PUBLIC_FETCH_TIMEOUT_SECONDS)) { "20" } else { $env:PUBLIC_FETCH_TIMEOUT_SECONDS }
+$fetchRetries = if ([string]::IsNullOrWhiteSpace($env:PUBLIC_FETCH_RETRIES)) { "2" } else { $env:PUBLIC_FETCH_RETRIES }
+$env:PUBLIC_MAX_HISTORY_DAYS = $maxHistoryDays
 $env:PUBLIC_MIN_BARS_TO_STOP = "999999999"
-$env:PUBLIC_MAX_DOWNLOAD_SECONDS = "2700"
+$env:PUBLIC_MAX_DOWNLOAD_SECONDS = $maxDownloadSeconds
 $env:PUBLIC_MIN_REQUIRED_BARS = "700"
-Set-Content -Path (Join-Path $reportsRoot "public_history_requested_range.txt") -Value "requested_from=$from`nrequested_to=$to`nhistory_from=$historyFrom`nhistory_to=$to`nwarmup_days=21`npublic_max_history_days=$env:PUBLIC_MAX_HISTORY_DAYS`npublic_min_bars_to_stop=$env:PUBLIC_MIN_BARS_TO_STOP" -Encoding UTF8
+$env:PUBLIC_FETCH_TIMEOUT_SECONDS = $fetchTimeout
+$env:PUBLIC_FETCH_RETRIES = $fetchRetries
+Set-Content -Path (Join-Path $reportsRoot "public_history_requested_range.txt") -Value "requested_from=$from`nrequested_to=$to`nhistory_from=$historyFrom`nhistory_to=$to`nwarmup_days=21`npublic_max_history_days=$env:PUBLIC_MAX_HISTORY_DAYS`npublic_min_bars_to_stop=$env:PUBLIC_MIN_BARS_TO_STOP`npublic_max_download_seconds=$env:PUBLIC_MAX_DOWNLOAD_SECONDS`npublic_fetch_timeout_seconds=$env:PUBLIC_FETCH_TIMEOUT_SECONDS`npublic_fetch_retries=$env:PUBLIC_FETCH_RETRIES" -Encoding UTF8
 Add-Content -Path (Join-Path $reportsRoot "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_warmup_history_download=true"
 Add-Content -Path (Join-Path $reportsRoot "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_warmup_history_from=$historyFrom"
 Add-Content -Path (Join-Path $reportsRoot "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_full_range_guard_runtime=true"
+Add-Content -Path (Join-Path $reportsRoot "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_dynamic_history_days=$env:PUBLIC_MAX_HISTORY_DAYS"
 python (Join-Path $repo "scripts\download_public_xau_m1.py") $historyFrom $to $csvPath 2>&1 | Tee-Object -FilePath (Join-Path $reportsRoot "download_public_history.log")
 '@
 if ($txt.Contains($oldDownload)) {
@@ -181,4 +188,5 @@ Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "pub
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_duplicate_thresholds_normalized=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_20_30_point_profile=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_v22_runtime_full_range_fix=true"
-Write-Host "Forced public intraday tester overrides with V22 runtime full-range guards."
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_dynamic_history_window_support=true"
+Write-Host "Forced public intraday tester overrides with dynamic full-range guards."
