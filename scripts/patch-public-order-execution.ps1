@@ -88,7 +88,7 @@ bool OpenMarketOrder(int direction, double atr)
   Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_v24_market_execution_retry=true"
 }
 
-if (-not $txt.Contains("public_v25_intraday_exit_manager_marker")) {
+if (-not $txt.Contains("public_v26_pine_atr_exit_manager_marker")) {
   $insertAt = $txt.IndexOf("void OnTick()")
   if ($insertAt -lt 0) { throw "OnTick marker not found." }
 
@@ -124,15 +124,22 @@ bool ClosePublicPosition(ulong ticket, string reason)
    return ok && (result.retcode == TRADE_RETCODE_DONE || result.retcode == TRADE_RETCODE_DONE_PARTIAL || result.retcode == TRADE_RETCODE_PLACED);
 }
 
-void ManagePublicIntradayExits()
+bool PublicEntryAtr(datetime openTime, double &atrValue)
 {
-   // public_v25_intraday_exit_manager_marker
+   atrValue = 0.0;
+   int shift = iBarShift(g_symbol, InpSignalTF, openTime, false);
+   if(shift < 1) shift = 1;
+   if(BufferValue(hATR, shift, atrValue) && atrValue > 0.0) return true;
+   if(BufferValue(hATR, 1, atrValue) && atrValue > 0.0) return true;
+   return false;
+}
+
+void ManagePublicPineAtrExits()
+{
+   // public_v26_pine_atr_exit_manager_marker
    if(g_symbol != "XAU_PUBLIC") return;
    MqlTick tick;
    if(!SymbolInfoTick(g_symbol, tick)) return;
-
-   MqlDateTime dt;
-   TimeToStruct(TimeCurrent(), dt);
 
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
@@ -144,33 +151,23 @@ void ManagePublicIntradayExits()
       long type = PositionGetInteger(POSITION_TYPE);
       double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
       datetime openTime = (datetime)PositionGetInteger(POSITION_TIME);
-      int heldMinutes = (int)((TimeCurrent() - openTime) / 60);
       double nowPrice = (type == POSITION_TYPE_BUY ? tick.bid : tick.ask);
-      double points = (type == POSITION_TYPE_BUY ? nowPrice - openPrice : openPrice - nowPrice);
+      double distance = (type == POSITION_TYPE_BUY ? nowPrice - openPrice : openPrice - nowPrice);
 
-      if(points >= 25.0)
+      double entryAtr = 0.0;
+      if(!PublicEntryAtr(openTime, entryAtr)) continue;
+
+      double pineTpDistance = entryAtr * InpTP_ATR_Multiplier;
+      double pineSlDistance = entryAtr * InpSL_ATR_Multiplier;
+
+      if(distance >= pineTpDistance)
       {
-         ClosePublicPosition(ticket, "PUBLIC_TP_25_POINTS");
+         ClosePublicPosition(ticket, "PUBLIC_PINE_ATR_TP");
          continue;
       }
-      if(points <= -35.0)
+      if(distance <= -pineSlDistance)
       {
-         ClosePublicPosition(ticket, "PUBLIC_SL_35_POINTS");
-         continue;
-      }
-      if(heldMinutes >= 240 && points >= 5.0)
-      {
-         ClosePublicPosition(ticket, "PUBLIC_TIME_PROFIT_EXIT");
-         continue;
-      }
-      if(heldMinutes >= 360)
-      {
-         ClosePublicPosition(ticket, "PUBLIC_MAX_TIME_EXIT");
-         continue;
-      }
-      if(dt.hour >= 16 && dt.min >= 45)
-      {
-         ClosePublicPosition(ticket, "PUBLIC_SESSION_END_EXIT");
+         ClosePublicPosition(ticket, "PUBLIC_PINE_ATR_SL");
          continue;
       }
    }
@@ -184,20 +181,20 @@ void ManagePublicIntradayExits()
     $oldOnTick = "void OnTick()`n{`n    if(!Ready() || !NewBar()) return;"
   }
   if ($txt.Contains($oldOnTick)) {
-    $txt = $txt.Replace($oldOnTick, "void OnTick()`r`n{`r`n    ManagePublicIntradayExits();`r`n    if(!Ready() || !NewBar()) return;")
+    $txt = $txt.Replace($oldOnTick, "void OnTick()`r`n{`r`n    ManagePublicPineAtrExits();`r`n    if(!Ready() || !NewBar()) return;")
   } else {
     $oldOnTickLoose = "void OnTick()`r`n{"
     if (-not $txt.Contains($oldOnTickLoose)) { $oldOnTickLoose = "void OnTick()`n{" }
     if (!$txt.Contains($oldOnTickLoose)) { throw "OnTick body marker not found." }
-    $txt = $txt.Replace($oldOnTickLoose, "void OnTick()`r`n{`r`n    ManagePublicIntradayExits();")
+    $txt = $txt.Replace($oldOnTickLoose, "void OnTick()`r`n{`r`n    ManagePublicPineAtrExits();")
   }
 
-  Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_v25_intraday_exit_manager=true"
-  Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_v25_tp_points=25"
-  Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_v25_sl_points=35"
-  Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_v25_max_hold_minutes=360"
+  Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_v26_pine_atr_exit_manager=true"
+  Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_v26_tp_atr_multiplier=$($env:InpTP_ATR_Multiplier)"
+  Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_v26_uses_ea_tp_atr_multiplier=true"
+  Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_v26_uses_ea_sl_atr_multiplier=true"
 }
 
 Set-Content -Path $eaSource -Value $txt -Encoding UTF8
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_v23_order_execution_patch=true"
-Write-Host "V25 public order execution and intraday exit patch applied."
+Write-Host "V26 public Pine ATR TP/SL execution patch applied."
