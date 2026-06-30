@@ -54,6 +54,7 @@ if ($txt.Contains('$env:PUBLIC_MIN_REQUIRED_BARS = "700"') -and -not $txt.Contai
 
 $oldRangePass = 'Add-Content -Path (Join-Path $reportsRoot "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_import_range_guard=passed"'
 $newRangePass = @'
+  $toDateObj = [datetime]::ParseExact($to, 'yyyy.MM.dd', [System.Globalization.CultureInfo]::InvariantCulture)
   $requiredLastDate = $toDateObj.Date
   while ($requiredLastDate.DayOfWeek -eq [System.DayOfWeek]::Saturday -or $requiredLastDate.DayOfWeek -eq [System.DayOfWeek]::Sunday) {
     $requiredLastDate = $requiredLastDate.AddDays(-1)
@@ -118,4 +119,5 @@ Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "pub
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_matrix_stagger_patch=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_one_month_runtime_patch=true"
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_one_month_end_guard_patch=true"
+Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_one_month_end_guard_todate_parse_fix=true"
 Write-Host "MT5 installer wait patch, one-month window, end-range guard, stagger, and direct public runtime patches applied."
