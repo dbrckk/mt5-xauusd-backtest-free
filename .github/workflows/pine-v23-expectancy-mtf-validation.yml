@@ -1,0 +1,122 @@
+name: PINE V23 EXPECTANCY MTF VALIDATION
+
+on:
+  workflow_dispatch:
+    inputs:
+      to_date:
+        description: "Backtest end date YYYY.MM.DD"
+        required: true
+        default: "2026.06.21"
+        type: string
+      force_days:
+        description: "Validation window length in days: 31, 62, or 93"
+        required: true
+        default: "93"
+        type: string
+      deposit:
+        description: "Initial deposit"
+        required: true
+        default: "10000"
+        type: string
+      leverage:
+        description: "Leverage"
+        required: true
+        default: "1:100"
+        type: string
+      model:
+        description: "0=Every tick"
+        required: true
+        default: "0"
+        type: string
+      timeout_minutes:
+        description: "Timeout minutes"
+        required: true
+        default: "240"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  pine-v23-expectancy-mtf-validation:
+    runs-on: windows-latest
+    timeout-minutes: 420
+
+    env:
+      BT_SYMBOL: XAU_PUBLIC
+      BT_PERIOD: M15
+      BT_FROM_DATE: "2026.01.01"
+      BT_TO_DATE: ${{ inputs.to_date }}
+      BT_DEPOSIT: ${{ inputs.deposit }}
+      BT_LEVERAGE: ${{ inputs.leverage }}
+      BT_MODEL: ${{ inputs.model }}
+      BT_TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
+      PUBLIC_FORCE_DAYS: ${{ inputs.force_days }}
+      PUBLIC_SINGLE_TIMEFRAME: "true"
+      PUBLIC_FETCH_TIMEOUT_SECONDS: "30"
+      PUBLIC_FETCH_RETRIES: "3"
+      PUBLIC_MAX_DOWNLOAD_SECONDS: "5400"
+      PUBLIC_MAX_HISTORY_DAYS: "140"
+      PUBLIC_MIN_BARS_TO_STOP: "0"
+      PUBLIC_REQUIRE_FULL_RANGE: "true"
+      PUBLIC_MIN_REQUIRED_BARS: "700"
+      MT5_LOGIN: ${{ secrets.MT5_LOGIN }}
+      MT5_PASSWORD: ${{ secrets.MT5_PASSWORD }}
+      MT5_SERVER: ${{ secrets.MT5_SERVER }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare reports
+        shell: pwsh
+        run: |
+          if (Test-Path reports) { Remove-Item reports -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path reports | Out-Null
+          Set-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "PINE_V23_EXPECTANCY_MTF_VALIDATION"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "workflow=pine-v23-expectancy-mtf-validation.yml"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "matrix_period=M15"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "validation_engine=pine_v23_expectancy_mtf_python_clone"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "input_to_date=${{ inputs.to_date }}"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "input_force_days=${{ inputs.force_days }}"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "sha=${{ github.sha }}"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "target_profiles=v23_balanced,v23_high_winrate,v23_expectancy,v23_m5_h1_clean"
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "target_design=M5 entries only; M15/M30/H1 confirmation; H2/H4 trend filters"
+
+      - name: Apply public diagnostic patch
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/apply-public-diagnostic-patch.ps1
+
+      - name: Force public set overrides
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/apply-public-set-overrides.ps1
+
+      - name: Patch MT5 installer wait
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/patch-mt5-install-wait.ps1
+
+      - name: Run public XAU data backtest
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-public-history-backtest.ps1 2>&1 | Tee-Object -FilePath reports/run_public_backtest_step.log
+          $code = $LASTEXITCODE
+          Add-Content -Path reports/CURRENT_PUBLIC_XAU_ONLY.txt -Value "run_public_backtest_exit_code=$code"
+          if ($code -ne 0) { exit $code }
+
+      - name: Analyze V23 MTF strategy
+        if: always()
+        shell: pwsh
+        run: |
+          Compress-Archive -Path reports/* -DestinationPath reports/_analysis_input.zip -Force
+          python scripts/analyze-public-artifact.py reports/_analysis_input.zip | Tee-Object -FilePath reports/PUBLIC_BACKTEST_ANALYSIS.json
+          python scripts/analyze-public-trade-quality.py reports --deposit ${{ inputs.deposit }} | Tee-Object -FilePath reports/PUBLIC_TRADE_QUALITY.json
+          python scripts/analyze-pine-v23-mtf.py reports --deposit ${{ inputs.deposit }} | Tee-Object -FilePath reports/PINE_V23_MTF_RUN.json
+
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PINE-V23-EXPECTANCY-MTF-${{ inputs.force_days }}D-${{ github.run_number }}-${{ github.sha }}
+          path: reports/**
+          if-no-files-found: error
+          retention-days: 14
