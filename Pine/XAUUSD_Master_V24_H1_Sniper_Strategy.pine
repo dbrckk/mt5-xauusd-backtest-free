@@ -1,0 +1,264 @@
+//@version=5
+strategy("XAUUSD Master V24 - H1 Sniper Core", overlay=true, pyramiding=0, process_orders_on_close=true, calc_on_every_tick=false, initial_capital=10000, commission_type=strategy.commission.percent, commission_value=0.0, max_labels_count=500, max_lines_count=500)
+
+// -----------------------------------------------------------------------------
+// XAUUSD Master V24 - H1 Sniper Core
+// Design:
+// - H1 Pine-strict core decides the trade.
+// - M5 only refines the entry after a valid H1 signal.
+// - H2/H4 are optional regime filters.
+// - No independent M5/M15/M30 entries.
+// Recommended chart: XAUUSD/GOLD 5 minutes.
+// -----------------------------------------------------------------------------
+
+groupGeneral = "General"
+profile = input.string("H1 sniper balanced", "Profile", options=["H1 proven", "H1 sniper balanced", "H1 sniper high winrate", "Custom"], group=groupGeneral)
+entryMode = input.string("M5 sniper", "Entry mode", options=["M5 sniper", "H1 close"], group=groupGeneral)
+maxTradesPerDay = input.int(2, "Max trades/day", minval=1, maxval=4, group=groupGeneral)
+minCooldownMin = input.int(180, "Cooldown minutes", minval=0, maxval=1440, group=groupGeneral)
+showLabels = input.bool(true, "Show labels", group=groupGeneral)
+showDashboard = input.bool(true, "Show dashboard", group=groupGeneral)
+
+// ===== H1 core =====
+groupH1 = "H1 core"
+h1FastLen = input.int(9, "H1 fast EMA", minval=1, group=groupH1)
+h1SlowLen = input.int(21, "H1 slow EMA", minval=2, group=groupH1)
+h1TrendLen = input.int(200, "H1 trend EMA", minval=20, group=groupH1)
+h1RsiLen = input.int(14, "H1 RSI", minval=2, group=groupH1)
+h1AtrLen = input.int(14, "H1 ATR", minval=2, group=groupH1)
+h1VolLen = input.int(20, "H1 volume SMA", minval=2, group=groupH1)
+h1VolMult = input.float(0.80, "H1 volume > SMA x", step=0.05, group=groupH1)
+useH1Slope = input.bool(false, "Require H1 EMA200 slope", group=groupH1)
+
+// ===== Sniper entry =====
+groupSniper = "M5 sniper"
+sniperWindowBars = input.int(12, "Max M5 bars after H1 signal", minval=1, maxval=96, group=groupSniper)
+m5FastLen = input.int(9, "M5 fast EMA", minval=1, group=groupSniper)
+m5SlowLen = input.int(21, "M5 slow EMA", minval=2, group=groupSniper)
+m5RsiLen = input.int(14, "M5 RSI", minval=2, group=groupSniper)
+m5DiLen = input.int(14, "M5 DI length", minval=2, group=groupSniper)
+m5AdxSmooth = input.int(14, "M5 ADX smoothing", minval=2, group=groupSniper)
+m5MinAdx = input.float(15.0, "M5 min ADX", step=0.5, group=groupSniper)
+maxAdverseATR = input.float(0.70, "Max pullback against H1 entry ATR", step=0.05, minval=0.1, group=groupSniper)
+minBodyRatio = input.float(0.30, "M5 min body/range", step=0.01, group=groupSniper)
+
+// ===== Regime filters =====
+groupRegime = "Regime filters"
+useH2Filter = input.bool(true, "Block H2 opposite", group=groupRegime)
+useH4Filter = input.bool(false, "Block H4 opposite", group=groupRegime)
+useM15Confirm = input.bool(false, "Require M15 same direction", group=groupRegime)
+useM30Confirm = input.bool(false, "Require M30 same direction", group=groupRegime)
+
+// ===== Session =====
+groupSession = "Session"
+useSession = input.bool(true, "Use session", group=groupSession)
+sessionStartHour = input.int(8, "Start hour", minval=0, maxval=23, group=groupSession)
+sessionEndHour = input.int(21, "End hour", minval=0, maxval=24, group=groupSession)
+blockFridayLate = input.bool(true, "Block Friday after 16:00", group=groupSession)
+
+// ===== Exits =====
+groupExit = "Exits"
+customTP = input.float(2.50, "Custom TP ATR", step=0.05, minval=0.1, group=groupExit)
+customSL = input.float(2.00, "Custom SL ATR", step=0.05, minval=0.1, group=groupExit)
+useBreakEven = input.bool(false, "Use break-even", group=groupExit)
+beTriggerATR = input.float(1.40, "BE trigger ATR", step=0.05, minval=0.1, group=groupExit)
+beOffsetATR = input.float(0.05, "BE offset ATR", step=0.01, minval=0.0, group=groupExit)
+useTimeExit = input.bool(false, "Use time exit if profitable", group=groupExit)
+maxHoldBars = input.int(48, "Max hold M5 bars", minval=1, maxval=1000, group=groupExit)
+
+// ===== Profile values =====
+tpATR = profile == "H1 proven" ? 2.50 : profile == "H1 sniper balanced" ? 2.20 : profile == "H1 sniper high winrate" ? 1.45 : customTP
+slATR = profile == "H1 proven" ? 2.00 : profile == "H1 sniper balanced" ? 1.45 : profile == "H1 sniper high winrate" ? 1.00 : customSL
+
+// ===== Utilities =====
+f_session_ok() =>
+    h = hour(time)
+    dow = dayofweek(time)
+    weekday = dow != dayofweek.saturday and dow != dayofweek.sunday
+    inHour = h >= sessionStartHour and h < sessionEndHour
+    fridayOk = not blockFridayLate or dow != dayofweek.friday or h < 16
+    not useSession or (weekday and inHour and fridayOk)
+
+f_h1_signal() =>
+    fast = ta.ema(close, h1FastLen)
+    slow = ta.ema(close, h1SlowLen)
+    trend = ta.ema(close, h1TrendLen)
+    trendSlope = trend - trend[3]
+    rsi = ta.rsi(close, h1RsiLen)
+    atr = ta.atr(h1AtrLen)
+    volOk = volume > ta.sma(volume, h1VolLen) * h1VolMult
+    slopeLongOk = not useH1Slope or trendSlope > 0
+    slopeShortOk = not useH1Slope or trendSlope < 0
+    longSig = ta.crossover(fast, slow) and close > trend and slopeLongOk and rsi > 50 and rsi < 68 and volOk
+    shortSig = ta.crossunder(fast, slow) and close < trend and slopeShortOk and rsi < 50 and rsi > 32 and volOk
+    dir = longSig ? 1 : shortSig ? -1 : 0
+    score = 0.0
+    score += dir != 0 ? 50.0 : 0.0
+    score += volOk ? 10.0 : 0.0
+    score += math.abs(fast - slow) / close * 1000.0
+    [dir, close, atr, score, time]
+
+f_trend_state() =>
+    fast = ta.ema(close, 9)
+    slow = ta.ema(close, 21)
+    trend = ta.ema(close, 200)
+    slope = trend - trend[3]
+    rsi = ta.rsi(close, 14)
+    bull = close > trend and fast > slow and slope > 0 and rsi > 50
+    bear = close < trend and fast < slow and slope < 0 and rsi < 50
+    bull ? 1 : bear ? -1 : 0
+
+[h1Dir, h1Close, h1Atr, h1Score, h1Time] = request.security(syminfo.tickerid, "60", f_h1_signal(), barmerge.gaps_off, barmerge.lookahead_off)
+st15 = request.security(syminfo.tickerid, "15", f_trend_state(), barmerge.gaps_off, barmerge.lookahead_off)
+st30 = request.security(syminfo.tickerid, "30", f_trend_state(), barmerge.gaps_off, barmerge.lookahead_off)
+st120 = request.security(syminfo.tickerid, "120", f_trend_state(), barmerge.gaps_off, barmerge.lookahead_off)
+st240 = request.security(syminfo.tickerid, "240", f_trend_state(), barmerge.gaps_off, barmerge.lookahead_off)
+
+// ===== Pending H1 signal =====
+var int lastH1SignalTime = na
+var int pendingDir = 0
+var float pendingClose = na
+var float pendingAtr = na
+var float pendingScore = na
+var int pendingStartBar = na
+
+newH1Signal = h1Dir != 0 and (na(lastH1SignalTime) or h1Time != lastH1SignalTime)
+regimeLongOk = (not useH2Filter or st120 >= 0) and (not useH4Filter or st240 >= 0) and (not useM15Confirm or st15 == 1) and (not useM30Confirm or st30 == 1)
+regimeShortOk = (not useH2Filter or st120 <= 0) and (not useH4Filter or st240 <= 0) and (not useM15Confirm or st15 == -1) and (not useM30Confirm or st30 == -1)
+newRegimeOk = h1Dir == 1 ? regimeLongOk : h1Dir == -1 ? regimeShortOk : false
+
+if newH1Signal and newRegimeOk
+    lastH1SignalTime := h1Time
+    pendingDir := int(h1Dir)
+    pendingClose := h1Close
+    pendingAtr := h1Atr
+    pendingScore := h1Score
+    pendingStartBar := bar_index
+
+pendingAge = not na(pendingStartBar) ? bar_index - pendingStartBar : 999999
+pendingValid = pendingDir != 0 and pendingAge <= sniperWindowBars and strategy.position_size == 0
+if pendingAge > sniperWindowBars
+    pendingDir := 0
+    pendingClose := na
+    pendingAtr := na
+    pendingScore := na
+    pendingStartBar := na
+
+// ===== M5 sniper trigger =====
+m5Fast = ta.ema(close, m5FastLen)
+m5Slow = ta.ema(close, m5SlowLen)
+m5Rsi = ta.rsi(close, m5RsiLen)
+[m5DiPlus, m5DiMinus, m5Adx] = ta.dmi(m5DiLen, m5AdxSmooth)
+rng = high - low
+body = math.abs(close - open)
+bodyOk = rng > 0 and body / rng >= minBodyRatio
+sessionOk = f_session_ok()
+
+m5LongConfirm = close > m5Fast and m5Fast > m5Slow and close > open and m5Rsi > 50 and m5Rsi < 70 and m5DiPlus > m5DiMinus and m5Adx >= m5MinAdx and bodyOk
+m5ShortConfirm = close < m5Fast and m5Fast < m5Slow and close < open and m5Rsi < 50 and m5Rsi > 30 and m5DiMinus > m5DiPlus and m5Adx >= m5MinAdx and bodyOk
+pullbackLongOk = not na(pendingAtr) and close >= pendingClose - pendingAtr * maxAdverseATR
+pullbackShortOk = not na(pendingAtr) and close <= pendingClose + pendingAtr * maxAdverseATR
+sniperLong = pendingValid and pendingDir == 1 and m5LongConfirm and pullbackLongOk
+sniperShort = pendingValid and pendingDir == -1 and m5ShortConfirm and pullbackShortOk
+h1CloseLong = pendingValid and pendingDir == 1 and pendingAge == 0
+h1CloseShort = pendingValid and pendingDir == -1 and pendingAge == 0
+
+// ===== Trade limiter =====
+var int tradesToday = 0
+var int lastEntryMs = na
+var float entryAtr = na
+var int entryBar = na
+var string entrySource = ""
+
+newDay = ta.change(time("D"))
+if newDay
+    tradesToday := 0
+
+cooldownOk = na(lastEntryMs) or time - lastEntryMs >= minCooldownMin * 60 * 1000
+canTrade = strategy.position_size == 0 and tradesToday < maxTradesPerDay and cooldownOk and sessionOk
+longSignal = canTrade and (entryMode == "H1 close" ? h1CloseLong : sniperLong)
+shortSignal = canTrade and (entryMode == "H1 close" ? h1CloseShort : sniperShort)
+
+if longSignal
+    strategy.entry("BUY", strategy.long, comment="BUY V24 H1->M5")
+    tradesToday += 1
+    lastEntryMs := time
+    entryAtr := pendingAtr
+    entryBar := bar_index
+    entrySource := entryMode
+    pendingDir := 0
+    alert("XAUUSD V24 BUY | H1 core | entry=" + entryMode + " | TP=" + str.tostring(tpATR) + " | SL=" + str.tostring(slATR), alert.freq_once_per_bar_close)
+
+if shortSignal
+    strategy.entry("SELL", strategy.short, comment="SELL V24 H1->M5")
+    tradesToday += 1
+    lastEntryMs := time
+    entryAtr := pendingAtr
+    entryBar := bar_index
+    entrySource := entryMode
+    pendingDir := 0
+    alert("XAUUSD V24 SELL | H1 core | entry=" + entryMode + " | TP=" + str.tostring(tpATR) + " | SL=" + str.tostring(slATR), alert.freq_once_per_bar_close)
+
+// ===== Exits =====
+atrExit = na(entryAtr) ? ta.atr(h1AtrLen) : entryAtr
+longTP = strategy.position_avg_price + atrExit * tpATR
+longSLBase = strategy.position_avg_price - atrExit * slATR
+shortTP = strategy.position_avg_price - atrExit * tpATR
+shortSLBase = strategy.position_avg_price + atrExit * slATR
+longBE = useBreakEven and strategy.position_size > 0 and high >= strategy.position_avg_price + atrExit * beTriggerATR
+shortBE = useBreakEven and strategy.position_size < 0 and low <= strategy.position_avg_price - atrExit * beTriggerATR
+longSL = longBE ? math.max(longSLBase, strategy.position_avg_price + atrExit * beOffsetATR) : longSLBase
+shortSL = shortBE ? math.min(shortSLBase, strategy.position_avg_price - atrExit * beOffsetATR) : shortSLBase
+
+if strategy.position_size > 0
+    strategy.exit("BUY EXIT", "BUY", stop=longSL, limit=longTP)
+if strategy.position_size < 0
+    strategy.exit("SELL EXIT", "SELL", stop=shortSL, limit=shortTP)
+
+holdBars = not na(entryBar) ? bar_index - entryBar : 0
+if useTimeExit and strategy.position_size > 0 and holdBars >= maxHoldBars and close > strategy.position_avg_price
+    strategy.close("BUY", comment="TIME PROFIT")
+if useTimeExit and strategy.position_size < 0 and holdBars >= maxHoldBars and close < strategy.position_avg_price
+    strategy.close("SELL", comment="TIME PROFIT")
+
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    entryAtr := na
+    entryBar := na
+    entrySource := ""
+
+// ===== Visuals =====
+plot(m5Fast, "M5 EMA 9", color=color.new(color.teal, 0))
+plot(m5Slow, "M5 EMA 21", color=color.new(color.orange, 0))
+plot(ta.ema(close, 200), "M5 EMA 200", color=color.new(color.gray, 0), linewidth=2)
+plot(strategy.position_size > 0 ? longTP : na, "Long TP", color=color.new(color.green, 0), style=plot.style_linebr)
+plot(strategy.position_size > 0 ? longSL : na, "Long SL", color=color.new(color.red, 0), style=plot.style_linebr)
+plot(strategy.position_size < 0 ? shortTP : na, "Short TP", color=color.new(color.green, 0), style=plot.style_linebr)
+plot(strategy.position_size < 0 ? shortSL : na, "Short SL", color=color.new(color.red, 0), style=plot.style_linebr)
+
+if showLabels and longSignal
+    label.new(bar_index, low, "BUY V24\nH1 -> M5\nTP " + str.tostring(tpATR) + " SL " + str.tostring(slATR), style=label.style_label_up, color=color.new(color.green, 0), textcolor=color.white)
+if showLabels and shortSignal
+    label.new(bar_index, high, "SELL V24\nH1 -> M5\nTP " + str.tostring(tpATR) + " SL " + str.tostring(slATR), style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white)
+
+var table dash = table.new(position.top_right, 2, 9, border_width=1)
+if showDashboard and barstate.islast
+    winrate = strategy.closedtrades > 0 ? strategy.wintrades / strategy.closedtrades * 100.0 : na
+    pf = strategy.grossloss != 0.0 ? strategy.grossprofit / math.abs(strategy.grossloss) : na
+    table.cell(dash, 0, 0, "XAU V24", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 1, 0, profile, text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 0, 1, "Entry")
+    table.cell(dash, 1, 1, entryMode)
+    table.cell(dash, 0, 2, "TP / SL")
+    table.cell(dash, 1, 2, str.tostring(tpATR) + " / " + str.tostring(slATR))
+    table.cell(dash, 0, 3, "Pending")
+    table.cell(dash, 1, 3, pendingDir == 1 ? "BUY" : pendingDir == -1 ? "SELL" : "none")
+    table.cell(dash, 0, 4, "H2/H4")
+    table.cell(dash, 1, 4, str.tostring(st120) + " / " + str.tostring(st240))
+    table.cell(dash, 0, 5, "Trades today")
+    table.cell(dash, 1, 5, str.tostring(tradesToday) + " / " + str.tostring(maxTradesPerDay))
+    table.cell(dash, 0, 6, "Closed")
+    table.cell(dash, 1, 6, str.tostring(strategy.closedtrades))
+    table.cell(dash, 0, 7, "Winrate")
+    table.cell(dash, 1, 7, na(winrate) ? "n/a" : str.tostring(winrate, "#.0") + "%")
+    table.cell(dash, 0, 8, "PF")
+    table.cell(dash, 1, 8, na(pf) ? "n/a" : str.tostring(pf, "#.00"))
