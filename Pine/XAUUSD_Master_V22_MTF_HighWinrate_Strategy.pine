@@ -1,0 +1,356 @@
+//@version=5
+strategy("XAUUSD Master V22 - MTF High Winrate Strategy", overlay=true, pyramiding=0, process_orders_on_close=true, calc_on_every_tick=false, initial_capital=10000, commission_type=strategy.commission.percent, commission_value=0.0, max_labels_count=500, max_lines_count=500)
+
+// -----------------------------------------------------------------------------
+// XAUUSD Master V22 - MTF High Winrate Strategy
+// Goal: fewer, cleaner signals across M5/M15/M30/H1/H2/H4.
+// Best use: run on a 5-minute XAUUSD/GOLD chart so all higher-timeframe signals
+// can be detected with minimal delay.
+// -----------------------------------------------------------------------------
+
+// ===== General controls =====
+groupGeneral = "General"
+profile = input.string("High winrate", "Profile", options=["High winrate", "Validated H1 profit", "Custom"], group=groupGeneral)
+maxTradesPerDay = input.int(4, "Max trades/day, all TF combined", minval=1, maxval=10, group=groupGeneral)
+minCooldownMin = input.int(90, "Cooldown between entries, minutes", minval=0, maxval=1440, group=groupGeneral)
+onlyOnePosition = input.bool(true, "Only one open position", group=groupGeneral)
+showDashboard = input.bool(true, "Show dashboard", group=groupGeneral)
+showSignalLabels = input.bool(true, "Show signal labels", group=groupGeneral)
+
+// ===== Timeframes =====
+groupTF = "Timeframes"
+useM5 = input.bool(true, "Use M5", group=groupTF)
+useM15 = input.bool(true, "Use M15", group=groupTF)
+useM30 = input.bool(true, "Use M30", group=groupTF)
+useH1 = input.bool(true, "Use H1", group=groupTF)
+useH2 = input.bool(true, "Use H2", group=groupTF)
+useH4 = input.bool(true, "Use H4", group=groupTF)
+preferHigherTF = input.bool(true, "Prefer higher TF when scores are tied", group=groupTF)
+
+// ===== Signal engine =====
+groupSignal = "Signal engine"
+fastLen = input.int(9, "Fast EMA", minval=1, group=groupSignal)
+slowLen = input.int(21, "Slow EMA", minval=1, group=groupSignal)
+trendLen = input.int(200, "Trend EMA", minval=20, group=groupSignal)
+rsiLen = input.int(14, "RSI length", minval=2, group=groupSignal)
+atrLen = input.int(14, "ATR length", minval=2, group=groupSignal)
+volLen = input.int(20, "Volume SMA length", minval=2, group=groupSignal)
+volMult = input.float(0.80, "Volume > SMA x", step=0.05, group=groupSignal)
+adxLen = input.int(14, "ADX DI length", minval=2, group=groupSignal)
+adxSmoothing = input.int(14, "ADX smoothing", minval=2, group=groupSignal)
+minADX = input.float(18.0, "Min ADX", step=0.5, group=groupSignal)
+minBodyRatio = input.float(0.36, "Min body/range", step=0.01, group=groupSignal)
+minAtrPct = input.float(0.035, "Min ATR %", step=0.005, group=groupSignal)
+maxAtrPct = input.float(0.60, "Max ATR %", step=0.01, group=groupSignal)
+minScoreCustom = input.float(82.0, "Custom min score", minval=0, maxval=100, step=1, group=groupSignal)
+
+// ===== RSI bands =====
+groupRSI = "RSI bands"
+longRsiMin = input.float(52.0, "Long RSI min", step=0.5, group=groupRSI)
+longRsiMax = input.float(66.0, "Long RSI max", step=0.5, group=groupRSI)
+shortRsiMin = input.float(34.0, "Short RSI min", step=0.5, group=groupRSI)
+shortRsiMax = input.float(48.0, "Short RSI max", step=0.5, group=groupRSI)
+
+// ===== Session =====
+groupSession = "Session"
+useSession = input.bool(true, "Use session filter", group=groupSession)
+sessionStartHour = input.int(8, "Start hour", minval=0, maxval=23, group=groupSession)
+sessionEndHour = input.int(21, "End hour", minval=0, maxval=24, group=groupSession)
+blockFridayLate = input.bool(true, "Block Friday after 16:00", group=groupSession)
+
+// ===== Exits =====
+groupExit = "Exits"
+customTP = input.float(1.50, "Custom TP ATR", step=0.1, minval=0.1, group=groupExit)
+customSL = input.float(2.00, "Custom SL ATR", step=0.1, minval=0.1, group=groupExit)
+useBreakEven = input.bool(true, "Use break-even stop", group=groupExit)
+beTriggerATR = input.float(0.90, "BE trigger ATR", step=0.1, minval=0.1, group=groupExit)
+beOffsetATR = input.float(0.05, "BE offset ATR", step=0.01, minval=0.0, group=groupExit)
+useTimeStop = input.bool(true, "Use time stop", group=groupExit)
+maxHoldBars = input.int(18, "Max hold bars on chart TF", minval=1, maxval=500, group=groupExit)
+
+// ===== Profile values =====
+tpATR = profile == "Validated H1 profit" ? 2.50 : profile == "High winrate" ? 1.50 : customTP
+slATR = profile == "Validated H1 profit" ? 2.00 : profile == "High winrate" ? 2.00 : customSL
+minScore = profile == "Validated H1 profit" ? 78.0 : profile == "High winrate" ? 84.0 : minScoreCustom
+
+// ===== Utility =====
+f_session_ok() =>
+    h = hour(time)
+    dow = dayofweek(time)
+    weekday = dow != dayofweek.saturday and dow != dayofweek.sunday
+    inHour = h >= sessionStartHour and h < sessionEndHour
+    notLateFriday = not blockFridayLate or dow != dayofweek.friday or h < 16
+    not useSession or (weekday and inHour and notLateFriday)
+
+f_signal() =>
+    fast = ta.ema(close, fastLen)
+    slow = ta.ema(close, slowLen)
+    ema200 = ta.ema(close, trendLen)
+    ema200Slope = ema200 - ema200[3]
+    rsi = ta.rsi(close, rsiLen)
+    atr = ta.atr(atrLen)
+    atrPct = close != 0.0 ? atr / close * 100.0 : 0.0
+    volOk = volume > ta.sma(volume, volLen) * volMult
+    [diPlus, diMinus, adx] = ta.dmi(adxLen, adxSmoothing)
+    rng = high - low
+    body = math.abs(close - open)
+    bodyOk = rng > 0.0 and body / rng >= minBodyRatio
+    candleLong = close > open and close > hl2
+    candleShort = close < open and close < hl2
+    atrOk = atrPct >= minAtrPct and atrPct <= maxAtrPct
+    sessionOk = f_session_ok()
+
+    longCross = ta.crossover(fast, slow)
+    shortCross = ta.crossunder(fast, slow)
+    longTrend = close > ema200 and ema200Slope > 0.0
+    shortTrend = close < ema200 and ema200Slope < 0.0
+    longRsiOk = rsi > longRsiMin and rsi < longRsiMax
+    shortRsiOk = rsi > shortRsiMin and rsi < shortRsiMax
+    longStructure = close > high[1] or close > ta.highest(high, 3)[1]
+    shortStructure = close < low[1] or close < ta.lowest(low, 3)[1]
+    longDI = diPlus > diMinus
+    shortDI = diMinus > diPlus
+
+    longScore = 0.0
+    longScore += longCross ? 20.0 : 0.0
+    longScore += longTrend ? 18.0 : 0.0
+    longScore += longRsiOk ? 14.0 : 0.0
+    longScore += volOk ? 9.0 : 0.0
+    longScore += adx >= minADX ? 9.0 : 0.0
+    longScore += longDI ? 7.0 : 0.0
+    longScore += bodyOk ? 7.0 : 0.0
+    longScore += candleLong ? 6.0 : 0.0
+    longScore += atrOk ? 5.0 : 0.0
+    longScore += longStructure ? 5.0 : 0.0
+
+    shortScore = 0.0
+    shortScore += shortCross ? 20.0 : 0.0
+    shortScore += shortTrend ? 18.0 : 0.0
+    shortScore += shortRsiOk ? 14.0 : 0.0
+    shortScore += volOk ? 9.0 : 0.0
+    shortScore += adx >= minADX ? 9.0 : 0.0
+    shortScore += shortDI ? 7.0 : 0.0
+    shortScore += bodyOk ? 7.0 : 0.0
+    shortScore += candleShort ? 6.0 : 0.0
+    shortScore += atrOk ? 5.0 : 0.0
+    shortScore += shortStructure ? 5.0 : 0.0
+
+    longOk = sessionOk and longCross and longTrend and longRsiOk and volOk and adx >= minADX and bodyOk and atrOk and longDI and longScore >= minScore
+    shortOk = sessionOk and shortCross and shortTrend and shortRsiOk and volOk and adx >= minADX and bodyOk and atrOk and shortDI and shortScore >= minScore
+    dir = longOk ? 1 : shortOk ? -1 : 0
+    score = longOk ? longScore : shortOk ? shortScore : 0.0
+    [dir, score, close, atr, time]
+
+// ===== Multi-timeframe signal feed =====
+[dir5, score5, entry5, atr5, time5] = request.security(syminfo.tickerid, "5", f_signal(), barmerge.gaps_off, barmerge.lookahead_off)
+[dir15, score15, entry15, atr15, time15] = request.security(syminfo.tickerid, "15", f_signal(), barmerge.gaps_off, barmerge.lookahead_off)
+[dir30, score30, entry30, atr30, time30] = request.security(syminfo.tickerid, "30", f_signal(), barmerge.gaps_off, barmerge.lookahead_off)
+[dir60, score60, entry60, atr60, time60] = request.security(syminfo.tickerid, "60", f_signal(), barmerge.gaps_off, barmerge.lookahead_off)
+[dir120, score120, entry120, atr120, time120] = request.security(syminfo.tickerid, "120", f_signal(), barmerge.gaps_off, barmerge.lookahead_off)
+[dir240, score240, entry240, atr240, time240] = request.security(syminfo.tickerid, "240", f_signal(), barmerge.gaps_off, barmerge.lookahead_off)
+
+var int last5 = na
+var int last15 = na
+var int last30 = na
+var int last60 = na
+var int last120 = na
+var int last240 = na
+
+new5 = useM5 and dir5 != 0 and (na(last5) or time5 != last5)
+new15 = useM15 and dir15 != 0 and (na(last15) or time15 != last15)
+new30 = useM30 and dir30 != 0 and (na(last30) or time30 != last30)
+new60 = useH1 and dir60 != 0 and (na(last60) or time60 != last60)
+new120 = useH2 and dir120 != 0 and (na(last120) or time120 != last120)
+new240 = useH4 and dir240 != 0 and (na(last240) or time240 != last240)
+
+// ===== Select best signal across all TFs =====
+selectedDir = 0
+selectedScore = 0.0
+selectedEntry = 0.0
+selectedATR = 0.0
+selectedTime = 0
+selectedRank = 0
+selectedTF = ""
+
+f_take_signal(_new, _dir, _score, _entry, _atr, _time, _rank, _tf, _selScore, _selRank) =>
+    _new and _dir != 0 and (_score > _selScore or (_score == _selScore and preferHigherTF and _rank > _selRank))
+
+if f_take_signal(new5, dir5, score5, entry5, atr5, time5, 1, "M5", selectedScore, selectedRank)
+    selectedDir := dir5
+    selectedScore := score5
+    selectedEntry := entry5
+    selectedATR := atr5
+    selectedTime := time5
+    selectedRank := 1
+    selectedTF := "M5"
+
+if f_take_signal(new15, dir15, score15, entry15, atr15, time15, 2, "M15", selectedScore, selectedRank)
+    selectedDir := dir15
+    selectedScore := score15
+    selectedEntry := entry15
+    selectedATR := atr15
+    selectedTime := time15
+    selectedRank := 2
+    selectedTF := "M15"
+
+if f_take_signal(new30, dir30, score30, entry30, atr30, time30, 3, "M30", selectedScore, selectedRank)
+    selectedDir := dir30
+    selectedScore := score30
+    selectedEntry := entry30
+    selectedATR := atr30
+    selectedTime := time30
+    selectedRank := 3
+    selectedTF := "M30"
+
+if f_take_signal(new60, dir60, score60, entry60, atr60, time60, 4, "H1", selectedScore, selectedRank)
+    selectedDir := dir60
+    selectedScore := score60
+    selectedEntry := entry60
+    selectedATR := atr60
+    selectedTime := time60
+    selectedRank := 4
+    selectedTF := "H1"
+
+if f_take_signal(new120, dir120, score120, entry120, atr120, time120, 5, "H2", selectedScore, selectedRank)
+    selectedDir := dir120
+    selectedScore := score120
+    selectedEntry := entry120
+    selectedATR := atr120
+    selectedTime := time120
+    selectedRank := 5
+    selectedTF := "H2"
+
+if f_take_signal(new240, dir240, score240, entry240, atr240, time240, 6, "H4", selectedScore, selectedRank)
+    selectedDir := dir240
+    selectedScore := score240
+    selectedEntry := entry240
+    selectedATR := atr240
+    selectedTime := time240
+    selectedRank := 6
+    selectedTF := "H4"
+
+if new5
+    last5 := time5
+if new15
+    last15 := time15
+if new30
+    last30 := time30
+if new60
+    last60 := time60
+if new120
+    last120 := time120
+if new240
+    last240 := time240
+
+// ===== Trade limiter =====
+var int tradesToday = 0
+var int lastEntryMs = na
+var float activeATR = na
+var string activeTF = ""
+var float activeScore = na
+var int activeEntryBar = na
+
+newDay = ta.change(time("D"))
+if newDay
+    tradesToday := 0
+
+cooldownOk = na(lastEntryMs) or time - lastEntryMs >= minCooldownMin * 60 * 1000
+positionOk = not onlyOnePosition or strategy.position_size == 0
+canTrade = tradesToday < maxTradesPerDay and cooldownOk and positionOk
+
+longSignal = selectedDir == 1 and canTrade
+shortSignal = selectedDir == -1 and canTrade
+
+if longSignal
+    activeATR := selectedATR
+    activeTF := selectedTF
+    activeScore := selectedScore
+    activeEntryBar := bar_index
+    tradesToday += 1
+    lastEntryMs := time
+    strategy.entry("BUY", strategy.long, comment="BUY " + selectedTF + " score " + str.tostring(selectedScore, "#.0"))
+    alert("XAUUSD V22 BUY | TF=" + selectedTF + " | score=" + str.tostring(selectedScore, "#.0") + " | TP_ATR=" + str.tostring(tpATR) + " | SL_ATR=" + str.tostring(slATR), alert.freq_once_per_bar_close)
+
+if shortSignal
+    activeATR := selectedATR
+    activeTF := selectedTF
+    activeScore := selectedScore
+    activeEntryBar := bar_index
+    tradesToday += 1
+    lastEntryMs := time
+    strategy.entry("SELL", strategy.short, comment="SELL " + selectedTF + " score " + str.tostring(selectedScore, "#.0"))
+    alert("XAUUSD V22 SELL | TF=" + selectedTF + " | score=" + str.tostring(selectedScore, "#.0") + " | TP_ATR=" + str.tostring(tpATR) + " | SL_ATR=" + str.tostring(slATR), alert.freq_once_per_bar_close)
+
+// ===== Exit management =====
+atrForExit = na(activeATR) ? ta.atr(atrLen) : activeATR
+longStopBase = strategy.position_avg_price - atrForExit * slATR
+longTake = strategy.position_avg_price + atrForExit * tpATR
+shortStopBase = strategy.position_avg_price + atrForExit * slATR
+shortTake = strategy.position_avg_price - atrForExit * tpATR
+
+longBEActive = useBreakEven and strategy.position_size > 0 and high >= strategy.position_avg_price + atrForExit * beTriggerATR
+shortBEActive = useBreakEven and strategy.position_size < 0 and low <= strategy.position_avg_price - atrForExit * beTriggerATR
+longStop = longBEActive ? math.max(longStopBase, strategy.position_avg_price + atrForExit * beOffsetATR) : longStopBase
+shortStop = shortBEActive ? math.min(shortStopBase, strategy.position_avg_price - atrForExit * beOffsetATR) : shortStopBase
+
+if strategy.position_size > 0
+    strategy.exit("BUY EXIT", "BUY", stop=longStop, limit=longTake)
+
+if strategy.position_size < 0
+    strategy.exit("SELL EXIT", "SELL", stop=shortStop, limit=shortTake)
+
+holdBars = not na(activeEntryBar) ? bar_index - activeEntryBar : 0
+if useTimeStop and strategy.position_size > 0 and holdBars >= maxHoldBars and close > strategy.position_avg_price
+    strategy.close("BUY", comment="TIME PROFIT EXIT")
+
+if useTimeStop and strategy.position_size < 0 and holdBars >= maxHoldBars and close < strategy.position_avg_price
+    strategy.close("SELL", comment="TIME PROFIT EXIT")
+
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    activeATR := na
+    activeTF := ""
+    activeScore := na
+    activeEntryBar := na
+
+// ===== Visuals =====
+emaFastChart = ta.ema(close, fastLen)
+emaSlowChart = ta.ema(close, slowLen)
+emaTrendChart = ta.ema(close, trendLen)
+plot(emaFastChart, "EMA Fast", color=color.new(color.teal, 0))
+plot(emaSlowChart, "EMA Slow", color=color.new(color.orange, 0))
+plot(emaTrendChart, "EMA 200", color=color.new(color.gray, 0), linewidth=2)
+
+plot(strategy.position_size > 0 ? longTake : na, "Long TP", color=color.new(color.green, 0), style=plot.style_linebr)
+plot(strategy.position_size > 0 ? longStop : na, "Long SL", color=color.new(color.red, 0), style=plot.style_linebr)
+plot(strategy.position_size < 0 ? shortTake : na, "Short TP", color=color.new(color.green, 0), style=plot.style_linebr)
+plot(strategy.position_size < 0 ? shortStop : na, "Short SL", color=color.new(color.red, 0), style=plot.style_linebr)
+
+if showSignalLabels and longSignal
+    label.new(bar_index, low, "BUY\n" + selectedTF + "\n" + str.tostring(selectedScore, "#.0"), style=label.style_label_up, textcolor=color.white, color=color.new(color.green, 0))
+
+if showSignalLabels and shortSignal
+    label.new(bar_index, high, "SELL\n" + selectedTF + "\n" + str.tostring(selectedScore, "#.0"), style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 0))
+
+// ===== Dashboard =====
+var table dash = table.new(position.top_right, 2, 9, border_width=1)
+if showDashboard and barstate.islast
+    winrate = strategy.closedtrades > 0 ? strategy.wintrades / strategy.closedtrades * 100.0 : na
+    pf = strategy.grossloss != 0.0 ? strategy.grossprofit / math.abs(strategy.grossloss) : na
+    table.cell(dash, 0, 0, "XAU V22", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 1, 0, profile, text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 0, 1, "TP / SL")
+    table.cell(dash, 1, 1, str.tostring(tpATR) + " / " + str.tostring(slATR))
+    table.cell(dash, 0, 2, "Min score")
+    table.cell(dash, 1, 2, str.tostring(minScore, "#.0"))
+    table.cell(dash, 0, 3, "Trades today")
+    table.cell(dash, 1, 3, str.tostring(tradesToday) + " / " + str.tostring(maxTradesPerDay))
+    table.cell(dash, 0, 4, "Last TF")
+    table.cell(dash, 1, 4, activeTF == "" ? selectedTF : activeTF)
+    table.cell(dash, 0, 5, "Last score")
+    table.cell(dash, 1, 5, na(activeScore) ? str.tostring(selectedScore, "#.0") : str.tostring(activeScore, "#.0"))
+    table.cell(dash, 0, 6, "Closed trades")
+    table.cell(dash, 1, 6, str.tostring(strategy.closedtrades))
+    table.cell(dash, 0, 7, "Win rate")
+    table.cell(dash, 1, 7, na(winrate) ? "n/a" : str.tostring(winrate, "#.0") + "%")
+    table.cell(dash, 0, 8, "Profit factor")
+    table.cell(dash, 1, 8, na(pf) ? "n/a" : str.tostring(pf, "#.00"))
