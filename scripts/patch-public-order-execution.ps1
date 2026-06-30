@@ -84,10 +84,120 @@ bool OpenMarketOrder(int direction, double atr)
 
 '@
   $txt = $txt.Substring(0, $start) + $newFunction + $txt.Substring($end)
-  Set-Content -Path $eaSource -Value $txt -Encoding UTF8
   Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_no_sl_orders=true"
   Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_v24_market_execution_retry=true"
 }
 
+if (-not $txt.Contains("public_v25_intraday_exit_manager_marker")) {
+  $insertAt = $txt.IndexOf("void OnTick()")
+  if ($insertAt -lt 0) { throw "OnTick marker not found." }
+
+  $exitCode = @'
+
+bool ClosePublicPosition(ulong ticket, string reason)
+{
+   if(ticket == 0 || !PositionSelectByTicket(ticket)) return false;
+   long positionType = PositionGetInteger(POSITION_TYPE);
+   double volume = PositionGetDouble(POSITION_VOLUME);
+   MqlTick tick;
+   if(!SymbolInfoTick(g_symbol, tick)) return false;
+
+   MqlTradeRequest request;
+   MqlTradeResult result;
+   ZeroMemory(request);
+   ZeroMemory(result);
+
+   request.action = TRADE_ACTION_DEAL;
+   request.position = ticket;
+   request.symbol = g_symbol;
+   request.magic = InpMagic;
+   request.volume = volume;
+   request.type = (positionType == POSITION_TYPE_BUY ? ORDER_TYPE_SELL : ORDER_TYPE_BUY);
+   request.price = (positionType == POSITION_TYPE_BUY ? tick.bid : tick.ask);
+   request.deviation = 100000;
+   request.type_filling = ORDER_FILLING_FOK;
+   request.type_time = ORDER_TIME_GTC;
+   request.comment = reason;
+
+   bool ok = OrderSend(request, result);
+   Journal(ok ? reason : "PUBLIC_EXIT_FAIL", StringFormat("ticket=%I64u retcode=%u price=%.5f", ticket, result.retcode, request.price));
+   return ok && (result.retcode == TRADE_RETCODE_DONE || result.retcode == TRADE_RETCODE_DONE_PARTIAL || result.retcode == TRADE_RETCODE_PLACED);
+}
+
+void ManagePublicIntradayExits()
+{
+   // public_v25_intraday_exit_manager_marker
+   if(g_symbol != "XAU_PUBLIC") return;
+   MqlTick tick;
+   if(!SymbolInfoTick(g_symbol, tick)) return;
+
+   MqlDateTime dt;
+   TimeToStruct(TimeCurrent(), dt);
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
+      if(PositionGetString(POSITION_SYMBOL) != g_symbol) continue;
+      if((ulong)PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
+
+      long type = PositionGetInteger(POSITION_TYPE);
+      double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      datetime openTime = (datetime)PositionGetInteger(POSITION_TIME);
+      int heldMinutes = (int)((TimeCurrent() - openTime) / 60);
+      double nowPrice = (type == POSITION_TYPE_BUY ? tick.bid : tick.ask);
+      double points = (type == POSITION_TYPE_BUY ? nowPrice - openPrice : openPrice - nowPrice);
+
+      if(points >= 25.0)
+      {
+         ClosePublicPosition(ticket, "PUBLIC_TP_25_POINTS");
+         continue;
+      }
+      if(points <= -35.0)
+      {
+         ClosePublicPosition(ticket, "PUBLIC_SL_35_POINTS");
+         continue;
+      }
+      if(heldMinutes >= 240 && points >= 5.0)
+      {
+         ClosePublicPosition(ticket, "PUBLIC_TIME_PROFIT_EXIT");
+         continue;
+      }
+      if(heldMinutes >= 360)
+      {
+         ClosePublicPosition(ticket, "PUBLIC_MAX_TIME_EXIT");
+         continue;
+      }
+      if(dt.hour >= 16 && dt.min >= 45)
+      {
+         ClosePublicPosition(ticket, "PUBLIC_SESSION_END_EXIT");
+         continue;
+      }
+   }
+}
+
+'@
+  $txt = $txt.Substring(0, $insertAt) + $exitCode + $txt.Substring($insertAt)
+
+  $oldOnTick = "void OnTick()`r`n{`r`n    if(!Ready() || !NewBar()) return;"
+  if (-not $txt.Contains($oldOnTick)) {
+    $oldOnTick = "void OnTick()`n{`n    if(!Ready() || !NewBar()) return;"
+  }
+  if ($txt.Contains($oldOnTick)) {
+    $txt = $txt.Replace($oldOnTick, "void OnTick()`r`n{`r`n    ManagePublicIntradayExits();`r`n    if(!Ready() || !NewBar()) return;")
+  } else {
+    $oldOnTickLoose = "void OnTick()`r`n{"
+    if (-not $txt.Contains($oldOnTickLoose)) { $oldOnTickLoose = "void OnTick()`n{" }
+    if (!$txt.Contains($oldOnTickLoose)) { throw "OnTick body marker not found." }
+    $txt = $txt.Replace($oldOnTickLoose, "void OnTick()`r`n{`r`n    ManagePublicIntradayExits();")
+  }
+
+  Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_v25_intraday_exit_manager=true"
+  Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_v25_tp_points=25"
+  Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_v25_sl_points=35"
+  Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_v25_max_hold_minutes=360"
+}
+
+Set-Content -Path $eaSource -Value $txt -Encoding UTF8
 Add-Content -Path (Join-Path $reports "CURRENT_PUBLIC_XAU_ONLY.txt") -Value "public_v23_order_execution_patch=true"
-Write-Host "V24 public order execution retry patch applied."
+Write-Host "V25 public order execution and intraday exit patch applied."
