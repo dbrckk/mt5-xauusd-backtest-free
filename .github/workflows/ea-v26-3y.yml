@@ -106,6 +106,9 @@ jobs:
       PUBLIC_MAX_HISTORY_DAYS: "370"
       PUBLIC_MIN_BARS_TO_STOP: "999999999"
       PUBLIC_MIN_REQUIRED_BARS: "20000"
+      MT5_LOGIN: ${{ secrets.MT5_LOGIN }}
+      MT5_SECRET: ${{ secrets.MT5_SECRET }}
+      MT5_SERVER: ${{ secrets.MT5_SERVER }}
     steps:
       - uses: actions/checkout@v4
       - name: Run EA V26 3Y MTF chunk
