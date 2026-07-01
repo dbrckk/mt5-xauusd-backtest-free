@@ -1,0 +1,193 @@
+//@version=5
+strategy("XAUUSD Master V25 - Buy Hunter", overlay=true, pyramiding=0, process_orders_on_close=true, calc_on_every_tick=false, initial_capital=10000, commission_type=strategy.commission.percent, commission_value=0.0, max_labels_count=500, max_lines_count=500)
+
+// -----------------------------------------------------------------------------
+// XAUUSD Master V25 - Buy Hunter
+// Purpose: find additional BUY trades without touching V24 Ultimate SELL.
+// Design:
+// - BUY only by default.
+// - M5/M15/M30/H1 entry source selectable.
+// - H1/H2/H4 bullish filters selectable.
+// - Breakout or pullback trigger selectable.
+// Recommended chart: XAUUSD/GOLD 5 minutes.
+// -----------------------------------------------------------------------------
+
+groupGeneral = "General"
+profile = input.string("Buy hunter balanced", "Profile", options=["Buy hunter balanced", "Buy hunter high winrate", "Buy hunter aggressive", "Custom"], group=groupGeneral)
+entryTF = input.string("M15", "Entry TF", options=["M5", "M15", "M30", "H1"], group=groupGeneral)
+triggerMode = input.string("Pullback", "Trigger", options=["Pullback", "Breakout", "EMA cross", "Momentum"], group=groupGeneral)
+maxTradesPerDay = input.int(3, "Max trades/day", minval=1, maxval=6, group=groupGeneral)
+minCooldownMin = input.int(90, "Cooldown minutes", minval=0, maxval=1440, group=groupGeneral)
+showLabels = input.bool(true, "Show labels", group=groupGeneral)
+showDashboard = input.bool(true, "Show dashboard", group=groupGeneral)
+
+// ===== Filters =====
+groupFilter = "Filters"
+fastLen = input.int(9, "Fast EMA", minval=1, group=groupFilter)
+slowLen = input.int(21, "Slow EMA", minval=2, group=groupFilter)
+trendLen = input.int(200, "Trend EMA", minval=20, group=groupFilter)
+rsiLen = input.int(14, "RSI", minval=2, group=groupFilter)
+atrLen = input.int(14, "ATR", minval=2, group=groupFilter)
+volLen = input.int(20, "Volume SMA", minval=2, group=groupFilter)
+volMult = input.float(0.85, "Volume > SMA x", step=0.05, group=groupFilter)
+minRsi = input.float(50.0, "Min RSI", step=0.5, group=groupFilter)
+maxRsi = input.float(70.0, "Max RSI", step=0.5, group=groupFilter)
+minBodyRatio = input.float(0.25, "Min body/range", step=0.01, group=groupFilter)
+useSlope = input.bool(true, "Require EMA200 slope", group=groupFilter)
+
+// ===== MTF confirmation =====
+groupMTF = "MTF confirmation"
+requireM15 = input.bool(false, "Require M15 bullish", group=groupMTF)
+requireM30 = input.bool(false, "Require M30 bullish", group=groupMTF)
+requireH1 = input.bool(true, "Require H1 bullish", group=groupMTF)
+blockH2Bear = input.bool(true, "Block H2 bearish", group=groupMTF)
+blockH4Bear = input.bool(false, "Block H4 bearish", group=groupMTF)
+
+// ===== Session =====
+groupSession = "Session"
+useSession = input.bool(true, "Use session", group=groupSession)
+sessionStartHour = input.int(8, "Start hour", minval=0, maxval=23, group=groupSession)
+sessionEndHour = input.int(21, "End hour", minval=0, maxval=24, group=groupSession)
+blockFridayLate = input.bool(true, "Block Friday after 16:00", group=groupSession)
+
+// ===== Exits =====
+groupExit = "Exits"
+customTP = input.float(1.80, "Custom TP ATR", step=0.05, minval=0.1, group=groupExit)
+customSL = input.float(1.20, "Custom SL ATR", step=0.05, minval=0.1, group=groupExit)
+useBreakEven = input.bool(false, "Use break-even", group=groupExit)
+beTriggerATR = input.float(1.20, "BE trigger ATR", step=0.05, minval=0.1, group=groupExit)
+beOffsetATR = input.float(0.03, "BE offset ATR", step=0.01, minval=0.0, group=groupExit)
+useTimeExit = input.bool(false, "Use time exit if profitable", group=groupExit)
+maxHoldBars = input.int(48, "Max hold M5 bars", minval=1, maxval=1000, group=groupExit)
+
+// ===== Profile values =====
+tpATR = profile == "Buy hunter high winrate" ? 1.25 : profile == "Buy hunter aggressive" ? 2.20 : profile == "Buy hunter balanced" ? 1.80 : customTP
+slATR = profile == "Buy hunter high winrate" ? 0.80 : profile == "Buy hunter aggressive" ? 1.20 : profile == "Buy hunter balanced" ? 1.20 : customSL
+
+f_session_ok() =>
+    h = hour(time)
+    dow = dayofweek(time)
+    weekday = dow != dayofweek.saturday and dow != dayofweek.sunday
+    inHour = h >= sessionStartHour and h < sessionEndHour
+    fridayOk = not blockFridayLate or dow != dayofweek.friday or h < 16
+    not useSession or (weekday and inHour and fridayOk)
+
+f_trend_state() =>
+    fast = ta.ema(close, fastLen)
+    slow = ta.ema(close, slowLen)
+    trend = ta.ema(close, trendLen)
+    slope = trend - trend[3]
+    rsi = ta.rsi(close, rsiLen)
+    bull = close > trend and fast > slow and (not useSlope or slope > 0) and rsi > 50
+    bear = close < trend and fast < slow and (not useSlope or slope < 0) and rsi < 50
+    bull ? 1 : bear ? -1 : 0
+
+f_buy_signal() =>
+    fast = ta.ema(close, fastLen)
+    slow = ta.ema(close, slowLen)
+    trend = ta.ema(close, trendLen)
+    slope = trend - trend[3]
+    rsi = ta.rsi(close, rsiLen)
+    atr = ta.atr(atrLen)
+    volOk = volume > ta.sma(volume, volLen) * volMult
+    rng = high - low
+    body = math.abs(close - open)
+    bodyOk = rng > 0 and body / rng >= minBodyRatio
+    trendOk = close > trend and fast > slow and (not useSlope or slope > 0) and rsi > minRsi and rsi < maxRsi
+    pullback = close > fast and fast > slow and low <= fast and close > open
+    breakout = close > ta.highest(high, 3)[1]
+    cross = ta.crossover(fast, slow)
+    momentum = close > open and close > high[1] and fast > slow
+    triggerOk = triggerMode == "Pullback" ? pullback : triggerMode == "Breakout" ? breakout : triggerMode == "EMA cross" ? cross : momentum
+    sig = trendOk and triggerOk and volOk and bodyOk
+    [sig ? 1 : 0, close, atr, rsi, time]
+
+[dir5, entry5, atr5, rsi5, time5] = request.security(syminfo.tickerid, "5", f_buy_signal(), barmerge.gaps_off, barmerge.lookahead_off)
+[dir15, entry15, atr15, rsi15, time15] = request.security(syminfo.tickerid, "15", f_buy_signal(), barmerge.gaps_off, barmerge.lookahead_off)
+[dir30, entry30, atr30, rsi30, time30] = request.security(syminfo.tickerid, "30", f_buy_signal(), barmerge.gaps_off, barmerge.lookahead_off)
+[dir60, entry60, atr60, rsi60, time60] = request.security(syminfo.tickerid, "60", f_buy_signal(), barmerge.gaps_off, barmerge.lookahead_off)
+
+st15 = request.security(syminfo.tickerid, "15", f_trend_state(), barmerge.gaps_off, barmerge.lookahead_off)
+st30 = request.security(syminfo.tickerid, "30", f_trend_state(), barmerge.gaps_off, barmerge.lookahead_off)
+st60 = request.security(syminfo.tickerid, "60", f_trend_state(), barmerge.gaps_off, barmerge.lookahead_off)
+st120 = request.security(syminfo.tickerid, "120", f_trend_state(), barmerge.gaps_off, barmerge.lookahead_off)
+st240 = request.security(syminfo.tickerid, "240", f_trend_state(), barmerge.gaps_off, barmerge.lookahead_off)
+
+rawDir = entryTF == "M5" ? dir5 : entryTF == "M15" ? dir15 : entryTF == "M30" ? dir30 : dir60
+rawEntry = entryTF == "M5" ? entry5 : entryTF == "M15" ? entry15 : entryTF == "M30" ? entry30 : entry60
+rawAtr = entryTF == "M5" ? atr5 : entryTF == "M15" ? atr15 : entryTF == "M30" ? atr30 : atr60
+rawTime = entryTF == "M5" ? time5 : entryTF == "M15" ? time15 : entryTF == "M30" ? time30 : time60
+
+var int lastSignalTime = na
+newSignal = rawDir == 1 and (na(lastSignalTime) or rawTime != lastSignalTime)
+mtfOk = (not requireM15 or st15 == 1) and (not requireM30 or st30 == 1) and (not requireH1 or st60 == 1) and (not blockH2Bear or st120 != -1) and (not blockH4Bear or st240 != -1)
+
+var int tradesToday = 0
+var int lastEntryMs = na
+var float entryAtr = na
+var int entryBar = na
+newDay = ta.change(time("D"))
+if newDay
+    tradesToday := 0
+
+cooldownOk = na(lastEntryMs) or time - lastEntryMs >= minCooldownMin * 60 * 1000
+canTrade = strategy.position_size == 0 and tradesToday < maxTradesPerDay and cooldownOk and f_session_ok()
+buySignal = newSignal and mtfOk and canTrade
+
+if buySignal
+    lastSignalTime := rawTime
+    strategy.entry("BUY", strategy.long, comment="BUY V25 " + entryTF)
+    entryAtr := rawAtr
+    entryBar := bar_index
+    tradesToday += 1
+    lastEntryMs := time
+    alert("XAUUSD V25 BUY | TF=" + entryTF + " | trigger=" + triggerMode + " | TP=" + str.tostring(tpATR) + " | SL=" + str.tostring(slATR), alert.freq_once_per_bar_close)
+
+atrExit = na(entryAtr) ? ta.atr(atrLen) : entryAtr
+longTP = strategy.position_avg_price + atrExit * tpATR
+longSLBase = strategy.position_avg_price - atrExit * slATR
+longBE = useBreakEven and strategy.position_size > 0 and high >= strategy.position_avg_price + atrExit * beTriggerATR
+longSL = longBE ? math.max(longSLBase, strategy.position_avg_price + atrExit * beOffsetATR) : longSLBase
+
+if strategy.position_size > 0
+    strategy.exit("BUY EXIT", "BUY", stop=longSL, limit=longTP)
+
+holdBars = not na(entryBar) ? bar_index - entryBar : 0
+if useTimeExit and strategy.position_size > 0 and holdBars >= maxHoldBars and close > strategy.position_avg_price
+    strategy.close("BUY", comment="TIME PROFIT")
+
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    entryAtr := na
+    entryBar := na
+
+plot(ta.ema(close, fastLen), "EMA 9", color=color.new(color.teal, 0))
+plot(ta.ema(close, slowLen), "EMA 21", color=color.new(color.orange, 0))
+plot(ta.ema(close, trendLen), "EMA 200", color=color.new(color.gray, 0), linewidth=2)
+plot(strategy.position_size > 0 ? longTP : na, "BUY TP", color=color.new(color.green, 0), style=plot.style_linebr)
+plot(strategy.position_size > 0 ? longSL : na, "BUY SL", color=color.new(color.red, 0), style=plot.style_linebr)
+
+if showLabels and buySignal
+    label.new(bar_index, low, "BUY V25\n" + entryTF + "\n" + triggerMode, style=label.style_label_up, color=color.new(color.green, 0), textcolor=color.white)
+
+var table dash = table.new(position.top_right, 2, 9, border_width=1)
+if showDashboard and barstate.islast
+    winrate = strategy.closedtrades > 0 ? strategy.wintrades / strategy.closedtrades * 100.0 : na
+    pf = strategy.grossloss != 0.0 ? strategy.grossprofit / math.abs(strategy.grossloss) : na
+    table.cell(dash, 0, 0, "XAU V25 BUY", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 1, 0, profile, text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 0, 1, "TF / Trigger")
+    table.cell(dash, 1, 1, entryTF + " / " + triggerMode)
+    table.cell(dash, 0, 2, "TP / SL")
+    table.cell(dash, 1, 2, str.tostring(tpATR) + " / " + str.tostring(slATR))
+    table.cell(dash, 0, 3, "MTF")
+    table.cell(dash, 1, 3, str.tostring(st15) + "/" + str.tostring(st30) + "/" + str.tostring(st60))
+    table.cell(dash, 0, 4, "H2/H4")
+    table.cell(dash, 1, 4, str.tostring(st120) + " / " + str.tostring(st240))
+    table.cell(dash, 0, 5, "Trades today")
+    table.cell(dash, 1, 5, str.tostring(tradesToday) + " / " + str.tostring(maxTradesPerDay))
+    table.cell(dash, 0, 6, "Closed")
+    table.cell(dash, 1, 6, str.tostring(strategy.closedtrades))
+    table.cell(dash, 0, 7, "Winrate")
+    table.cell(dash, 1, 7, na(winrate) ? "n/a" : str.tostring(winrate, "#.0") + "%")
+    table.cell(dash, 0, 8, "PF")
+    table.cell(dash, 1, 8, na(pf) ? "n/a" : str.tostring(pf, "#.00"))
