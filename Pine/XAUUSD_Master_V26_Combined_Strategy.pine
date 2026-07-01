@@ -1,24 +1,26 @@
 //@version=5
 strategy("XAUUSD Master V26 - Combined SELL+BUY", overlay=true, pyramiding=0, process_orders_on_close=true, calc_on_every_tick=false, initial_capital=10000, commission_type=strategy.commission.percent, commission_value=0.0, max_labels_count=500, max_lines_count=500)
 
-// V26 Combined
-// SELL core: V24 Ultimate = H1 SELL only, H1 close, TP 2.5 ATR, SL 2.0 ATR.
-// BUY add-on: V25 Quality or Frequency = M15 BUY only, TP 1.0 ATR, SL 2.0 ATR.
-// Risk rule: one open position only. Cooldown default reduced to 30 minutes.
+// -----------------------------------------------------------------------------
+// XAUUSD Master V26 Combined
+// Core:
+// - V24 Ultimate SELL: H1 close, SELL only, TP 2.5 ATR, SL 2.0 ATR.
+// - V25 BUY add-on: M15 BUY Quality or Frequency.
+// - One position at a time.
+// - Cooldown default reduced to 30 minutes.
 // Recommended chart: XAUUSD/GOLD 5 minutes.
+// -----------------------------------------------------------------------------
 
-groupGeneral = "General"
-mode = input.string("SELL + BUY Quality", "Mode", options=["SELL only", "SELL + BUY Quality", "SELL + BUY Frequency"], group=groupGeneral)
-minCooldownMin = input.int(30, "Cooldown minutes", minval=0, maxval=1440, group=groupGeneral)
-maxTradesPerDay = input.int(6, "Max trades/day", minval=1, maxval=12, group=groupGeneral)
-priority = input.string("SELL first", "Same-bar priority", options=["SELL first", "BUY first"], group=groupGeneral)
-showLabels = input.bool(true, "Show labels", group=groupGeneral)
-showDashboard = input.bool(true, "Show dashboard", group=groupGeneral)
+groupMain = "V26 Combined"
+buyMode = input.string("BUY Quality", "BUY add-on", options=["Off", "BUY Quality", "BUY Frequency", "BUY Profit Max"], group=groupMain)
+signalPriority = input.string("SELL first", "If BUY and SELL same bar", options=["SELL first", "BUY first"], group=groupMain)
+maxTradesPerDay = input.int(5, "Max trades/day", minval=1, maxval=12, group=groupMain)
+minCooldownMin = input.int(30, "Cooldown minutes", minval=0, maxval=1440, group=groupMain)
+showLabels = input.bool(true, "Show labels", group=groupMain)
+showDashboard = input.bool(true, "Show dashboard", group=groupMain)
 
-// H1 SELL core inputs
+// ===== H1 SELL core =====
 groupSell = "V24 SELL core"
-sellTP = input.float(2.50, "SELL TP ATR", step=0.05, group=groupSell)
-sellSL = input.float(2.00, "SELL SL ATR", step=0.05, group=groupSell)
 sellFastLen = input.int(9, "SELL H1 fast EMA", minval=1, group=groupSell)
 sellSlowLen = input.int(21, "SELL H1 slow EMA", minval=2, group=groupSell)
 sellTrendLen = input.int(200, "SELL H1 trend EMA", minval=20, group=groupSell)
@@ -26,11 +28,11 @@ sellRsiLen = input.int(14, "SELL H1 RSI", minval=2, group=groupSell)
 sellAtrLen = input.int(14, "SELL H1 ATR", minval=2, group=groupSell)
 sellVolLen = input.int(20, "SELL H1 volume SMA", minval=2, group=groupSell)
 sellVolMult = input.float(0.80, "SELL H1 volume > SMA x", step=0.05, group=groupSell)
+sellTPATR = input.float(2.50, "SELL TP ATR", step=0.05, minval=0.1, group=groupSell)
+sellSLATR = input.float(2.00, "SELL SL ATR", step=0.05, minval=0.1, group=groupSell)
 
-// BUY add-on inputs
+// ===== M15 BUY add-on =====
 groupBuy = "V25 BUY add-on"
-buyTP = input.float(1.00, "BUY TP ATR", step=0.05, group=groupBuy)
-buySL = input.float(2.00, "BUY SL ATR", step=0.05, group=groupBuy)
 buyFastLen = input.int(9, "BUY M15 fast EMA", minval=1, group=groupBuy)
 buySlowLen = input.int(21, "BUY M15 slow EMA", minval=2, group=groupBuy)
 buyTrendLen = input.int(200, "BUY M15 trend EMA", minval=20, group=groupBuy)
@@ -38,16 +40,32 @@ buyRsiLen = input.int(14, "BUY M15 RSI", minval=2, group=groupBuy)
 buyAtrLen = input.int(14, "BUY M15 ATR", minval=2, group=groupBuy)
 buyVolLen = input.int(20, "BUY M15 volume SMA", minval=2, group=groupBuy)
 buyVolMult = input.float(0.80, "BUY M15 volume > SMA x", step=0.05, group=groupBuy)
-buyMinRsi = input.float(50.0, "BUY min RSI", step=0.5, group=groupBuy)
-buyMaxRsi = input.float(70.0, "BUY max RSI", step=0.5, group=groupBuy)
-buyMinBody = input.float(0.25, "BUY min body/range", step=0.01, group=groupBuy)
+buyRsiMin = input.float(50.0, "BUY RSI min", step=0.5, group=groupBuy)
+buyRsiMax = input.float(70.0, "BUY RSI max", step=0.5, group=groupBuy)
+buyBodyMin = input.float(0.25, "BUY min body/range", step=0.01, group=groupBuy)
+useBuyH1Filter = input.bool(false, "Require H1 bullish for BUY", group=groupBuy)
+blockBuyH2Bear = input.bool(false, "Block BUY if H2 bearish", group=groupBuy)
+blockBuyH4Bear = input.bool(false, "Block BUY if H4 bearish", group=groupBuy)
 
-// Session
+// ===== Session =====
 groupSession = "Session"
 useSession = input.bool(true, "Use session", group=groupSession)
 sessionStartHour = input.int(8, "Start hour", minval=0, maxval=23, group=groupSession)
 sessionEndHour = input.int(21, "End hour", minval=0, maxval=24, group=groupSession)
 blockFridayLate = input.bool(true, "Block Friday after 16:00", group=groupSession)
+
+// ===== Optional exits =====
+groupExit = "Optional exits"
+useBreakEven = input.bool(false, "Use break-even", group=groupExit)
+beTriggerATR = input.float(1.20, "BE trigger ATR", step=0.05, minval=0.1, group=groupExit)
+beOffsetATR = input.float(0.03, "BE offset ATR", step=0.01, minval=0.0, group=groupExit)
+useTimeExit = input.bool(false, "Use time exit if profitable", group=groupExit)
+maxHoldBars = input.int(96, "Max hold M5 bars", minval=1, maxval=2000, group=groupExit)
+
+// ===== Profile-derived BUY exits =====
+buyTPATR = buyMode == "BUY Profit Max" ? 1.80 : 1.00
+buySLATR = buyMode == "BUY Profit Max" ? 0.80 : 2.00
+buyTrigger = buyMode == "BUY Frequency" ? "Momentum" : "Breakout"
 
 f_session_ok() =>
     h = hour(time)
@@ -56,6 +74,16 @@ f_session_ok() =>
     inHour = h >= sessionStartHour and h < sessionEndHour
     fridayOk = not blockFridayLate or dow != dayofweek.friday or h < 16
     not useSession or (weekday and inHour and fridayOk)
+
+f_trend_state() =>
+    fast = ta.ema(close, 9)
+    slow = ta.ema(close, 21)
+    trend = ta.ema(close, 200)
+    slope = trend - trend[3]
+    rsi = ta.rsi(close, 14)
+    bull = close > trend and fast > slow and slope > 0 and rsi > 50
+    bear = close < trend and fast < slow and slope < 0 and rsi < 50
+    bull ? 1 : bear ? -1 : 0
 
 f_sell_h1() =>
     fast = ta.ema(close, sellFastLen)
@@ -76,68 +104,100 @@ f_buy_m15() =>
     atr = ta.atr(buyAtrLen)
     volOk = volume > ta.sma(volume, buyVolLen) * buyVolMult
     rng = high - low
-    bodyOk = rng > 0 and math.abs(close - open) / rng >= buyMinBody
-    trendOk = close > trend and fast > slow and slope > 0 and rsi > buyMinRsi and rsi < buyMaxRsi and volOk and bodyOk
+    body = math.abs(close - open)
+    bodyOk = rng > 0 and body / rng >= buyBodyMin
+    trendOk = close > trend and fast > slow and slope > 0 and rsi > buyRsiMin and rsi < buyRsiMax and volOk and bodyOk
     breakout = close > ta.highest(high, 3)[1]
     momentum = close > open and close > high[1]
-    wantFreq = mode == "SELL + BUY Frequency"
-    trig = wantFreq ? momentum : breakout
-    sig = trendOk and trig
-    [sig ? 1 : 0, close, atr, time]
+    trig = buyTrigger == "Momentum" ? momentum : breakout
+    [trendOk and trig ? 1 : 0, close, atr, time]
 
-[sellRaw, sellEntry, sellAtr, sellTime] = request.security(syminfo.tickerid, "60", f_sell_h1(), barmerge.gaps_off, barmerge.lookahead_off)
-[buyRaw, buyEntry, buyAtr, buyTime] = request.security(syminfo.tickerid, "15", f_buy_m15(), barmerge.gaps_off, barmerge.lookahead_off)
+[sellRaw, sellEntryRef, sellAtr, sellTime] = request.security(syminfo.tickerid, "60", f_sell_h1(), barmerge.gaps_off, barmerge.lookahead_off)
+[buyRaw, buyEntryRef, buyAtr, buyTime] = request.security(syminfo.tickerid, "15", f_buy_m15(), barmerge.gaps_off, barmerge.lookahead_off)
+h1State = request.security(syminfo.tickerid, "60", f_trend_state(), barmerge.gaps_off, barmerge.lookahead_off)
+h2State = request.security(syminfo.tickerid, "120", f_trend_state(), barmerge.gaps_off, barmerge.lookahead_off)
+h4State = request.security(syminfo.tickerid, "240", f_trend_state(), barmerge.gaps_off, barmerge.lookahead_off)
 
-var int lastSellSignalTime = na
-var int lastBuySignalTime = na
-newSell = sellRaw == 1 and (na(lastSellSignalTime) or sellTime != lastSellSignalTime)
-newBuy = mode != "SELL only" and buyRaw == 1 and (na(lastBuySignalTime) or buyTime != lastBuySignalTime)
+var int lastSellTime = na
+var int lastBuyTime = na
+newSell = sellRaw == 1 and (na(lastSellTime) or sellTime != lastSellTime)
+buyFilterOk = buyMode != "Off" and (not useBuyH1Filter or h1State == 1) and (not blockBuyH2Bear or h2State != -1) and (not blockBuyH4Bear or h4State != -1)
+newBuy = buyRaw == 1 and buyFilterOk and (na(lastBuyTime) or buyTime != lastBuyTime)
 
-// Trade state
+// ===== Trade limiter =====
 var int tradesToday = 0
 var int lastEntryMs = na
 var float entryAtr = na
-var string entrySide = ""
+var float entryTP = na
+var float entrySL = na
+var int entryBar = na
+var string entryName = ""
+
 newDay = ta.change(time("D"))
 if newDay
     tradesToday := 0
 
 cooldownOk = na(lastEntryMs) or time - lastEntryMs >= minCooldownMin * 60 * 1000
 canTrade = strategy.position_size == 0 and tradesToday < maxTradesPerDay and cooldownOk and f_session_ok()
-enterSell = canTrade and newSell and (priority == "SELL first" or not newBuy)
-enterBuy = canTrade and newBuy and (priority == "BUY first" or not newSell)
 
-if enterSell
-    lastSellSignalTime := sellTime
-    strategy.entry("SELL", strategy.short, comment="V26 SELL")
+chosenSell = signalPriority == "SELL first" ? newSell : newSell and not newBuy
+chosenBuy = signalPriority == "BUY first" ? newBuy : newBuy and not newSell
+sellSignal = canTrade and chosenSell
+buySignal = canTrade and chosenBuy
+
+if sellSignal
+    lastSellTime := sellTime
+    strategy.entry("SELL", strategy.short, comment="SELL V26")
+    tradesToday += 1
+    lastEntryMs := time
     entryAtr := sellAtr
-    entrySide := "SELL"
-    tradesToday += 1
-    lastEntryMs := time
-    alert("XAUUSD V26 SELL | TP=" + str.tostring(sellTP) + " | SL=" + str.tostring(sellSL), alert.freq_once_per_bar_close)
+    entryTP := sellTPATR
+    entrySL := sellSLATR
+    entryBar := bar_index
+    entryName := "SELL"
+    alert("XAUUSD V26 SELL | H1 close | TP=" + str.tostring(sellTPATR) + " | SL=" + str.tostring(sellSLATR), alert.freq_once_per_bar_close)
 
-if enterBuy
-    lastBuySignalTime := buyTime
-    strategy.entry("BUY", strategy.long, comment="V26 BUY")
-    entryAtr := buyAtr
-    entrySide := mode == "SELL + BUY Frequency" ? "BUY Frequency" : "BUY Quality"
+if buySignal
+    lastBuyTime := buyTime
+    strategy.entry("BUY", strategy.long, comment="BUY V26 " + buyMode)
     tradesToday += 1
     lastEntryMs := time
-    alert("XAUUSD V26 BUY | " + entrySide + " | TP=" + str.tostring(buyTP) + " | SL=" + str.tostring(buySL), alert.freq_once_per_bar_close)
+    entryAtr := buyAtr
+    entryTP := buyTPATR
+    entrySL := buySLATR
+    entryBar := bar_index
+    entryName := "BUY"
+    alert("XAUUSD V26 BUY | " + buyMode + " | TP=" + str.tostring(buyTPATR) + " | SL=" + str.tostring(buySLATR), alert.freq_once_per_bar_close)
 
 atrExit = na(entryAtr) ? ta.atr(14) : entryAtr
-longTP = strategy.position_avg_price + atrExit * buyTP
-longSL = strategy.position_avg_price - atrExit * buySL
-shortTP = strategy.position_avg_price - atrExit * sellTP
-shortSL = strategy.position_avg_price + atrExit * sellSL
+tpMult = na(entryTP) ? 1.0 : entryTP
+slMult = na(entrySL) ? 2.0 : entrySL
+longTP = strategy.position_avg_price + atrExit * tpMult
+longSLBase = strategy.position_avg_price - atrExit * slMult
+shortTP = strategy.position_avg_price - atrExit * tpMult
+shortSLBase = strategy.position_avg_price + atrExit * slMult
+longBE = useBreakEven and strategy.position_size > 0 and high >= strategy.position_avg_price + atrExit * beTriggerATR
+shortBE = useBreakEven and strategy.position_size < 0 and low <= strategy.position_avg_price - atrExit * beTriggerATR
+longSL = longBE ? math.max(longSLBase, strategy.position_avg_price + atrExit * beOffsetATR) : longSLBase
+shortSL = shortBE ? math.min(shortSLBase, strategy.position_avg_price - atrExit * beOffsetATR) : shortSLBase
 
 if strategy.position_size > 0
     strategy.exit("BUY EXIT", "BUY", stop=longSL, limit=longTP)
 if strategy.position_size < 0
     strategy.exit("SELL EXIT", "SELL", stop=shortSL, limit=shortTP)
+
+holdBars = not na(entryBar) ? bar_index - entryBar : 0
+if useTimeExit and strategy.position_size > 0 and holdBars >= maxHoldBars and close > strategy.position_avg_price
+    strategy.close("BUY", comment="TIME PROFIT")
+if useTimeExit and strategy.position_size < 0 and holdBars >= maxHoldBars and close < strategy.position_avg_price
+    strategy.close("SELL", comment="TIME PROFIT")
+
 if strategy.position_size == 0 and strategy.position_size[1] != 0
     entryAtr := na
-    entrySide := ""
+    entryTP := na
+    entrySL := na
+    entryBar := na
+    entryName := ""
 
 plot(ta.ema(close, 9), "EMA 9", color=color.new(color.teal, 0))
 plot(ta.ema(close, 21), "EMA 21", color=color.new(color.orange, 0))
@@ -147,30 +207,32 @@ plot(strategy.position_size > 0 ? longSL : na, "BUY SL", color=color.new(color.r
 plot(strategy.position_size < 0 ? shortTP : na, "SELL TP", color=color.new(color.green, 0), style=plot.style_linebr)
 plot(strategy.position_size < 0 ? shortSL : na, "SELL SL", color=color.new(color.red, 0), style=plot.style_linebr)
 
-if showLabels and enterSell
-    label.new(bar_index, high, "SELL V26\nH1\nTP 2.5 SL 2.0", style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white)
-if showLabels and enterBuy
-    label.new(bar_index, low, "BUY V26\nM15\n" + entrySide, style=label.style_label_up, color=color.new(color.green, 0), textcolor=color.white)
+if showLabels and buySignal
+    label.new(bar_index, low, "BUY V26\n" + buyMode, style=label.style_label_up, color=color.new(color.green, 0), textcolor=color.white)
+if showLabels and sellSignal
+    label.new(bar_index, high, "SELL V26\nV24 Ultimate", style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white)
 
-var table dash = table.new(position.top_right, 2, 9, border_width=1)
+var table dash = table.new(position.top_right, 2, 10, border_width=1)
 if showDashboard and barstate.islast
     winrate = strategy.closedtrades > 0 ? strategy.wintrades / strategy.closedtrades * 100.0 : na
     pf = strategy.grossloss != 0.0 ? strategy.grossprofit / math.abs(strategy.grossloss) : na
     table.cell(dash, 0, 0, "XAU V26", text_color=color.white, bgcolor=color.new(color.black, 0))
-    table.cell(dash, 1, 0, mode, text_color=color.white, bgcolor=color.new(color.black, 0))
-    table.cell(dash, 0, 1, "Cooldown")
-    table.cell(dash, 1, 1, str.tostring(minCooldownMin) + " min")
-    table.cell(dash, 0, 2, "Priority")
-    table.cell(dash, 1, 2, priority)
-    table.cell(dash, 0, 3, "SELL TP/SL")
-    table.cell(dash, 1, 3, str.tostring(sellTP) + "/" + str.tostring(sellSL))
-    table.cell(dash, 0, 4, "BUY TP/SL")
-    table.cell(dash, 1, 4, str.tostring(buyTP) + "/" + str.tostring(buySL))
-    table.cell(dash, 0, 5, "Trades today")
-    table.cell(dash, 1, 5, str.tostring(tradesToday) + "/" + str.tostring(maxTradesPerDay))
-    table.cell(dash, 0, 6, "Closed")
-    table.cell(dash, 1, 6, str.tostring(strategy.closedtrades))
-    table.cell(dash, 0, 7, "Winrate")
-    table.cell(dash, 1, 7, na(winrate) ? "n/a" : str.tostring(winrate, "#.0") + "%")
-    table.cell(dash, 0, 8, "PF")
-    table.cell(dash, 1, 8, na(pf) ? "n/a" : str.tostring(pf, "#.00"))
+    table.cell(dash, 1, 0, "Combined", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 0, 1, "BUY mode")
+    table.cell(dash, 1, 1, buyMode)
+    table.cell(dash, 0, 2, "Cooldown")
+    table.cell(dash, 1, 2, str.tostring(minCooldownMin) + "m")
+    table.cell(dash, 0, 3, "Priority")
+    table.cell(dash, 1, 3, signalPriority)
+    table.cell(dash, 0, 4, "Current")
+    table.cell(dash, 1, 4, entryName == "" ? "none" : entryName)
+    table.cell(dash, 0, 5, "H1/H2/H4")
+    table.cell(dash, 1, 5, str.tostring(h1State) + "/" + str.tostring(h2State) + "/" + str.tostring(h4State))
+    table.cell(dash, 0, 6, "Trades today")
+    table.cell(dash, 1, 6, str.tostring(tradesToday) + " / " + str.tostring(maxTradesPerDay))
+    table.cell(dash, 0, 7, "Closed")
+    table.cell(dash, 1, 7, str.tostring(strategy.closedtrades))
+    table.cell(dash, 0, 8, "Winrate")
+    table.cell(dash, 1, 8, na(winrate) ? "n/a" : str.tostring(winrate, "#.0") + "%")
+    table.cell(dash, 0, 9, "PF")
+    table.cell(dash, 1, 9, na(pf) ? "n/a" : str.tostring(pf, "#.00"))
