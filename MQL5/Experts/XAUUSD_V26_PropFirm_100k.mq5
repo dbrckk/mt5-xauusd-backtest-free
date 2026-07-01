@@ -1,18 +1,18 @@
 //+------------------------------------------------------------------+
 //| XAUUSD_V26_PropFirm_100k.mq5                                     |
 //| V26 Combined EA: V24 SELL Ultimate + V25 BUY Quality             |
-//| Defaults: 100k test, fixed 0.20 lot, max 8 trades/day             |
+//| Defaults: 15k demo test, forced 0.02 lot, max 8 trades/day        |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "1.00"
-#property description "XAUUSD V26 Combined EA - fixed lot prop firm demo test"
+#property version   "1.01"
+#property description "XAUUSD V26 Combined EA - forced 0.02 lot demo test"
 
 #include <Trade/Trade.mqh>
 
 CTrade trade;
 
 input string InpTradeSymbol = "";
-input double FixedLot = 0.20;
+input double FixedLot = 0.02;
 input int MaxTradesPerDay = 8;
 input int CooldownMinutes = 30;
 input ulong MagicNumber = 260100;
@@ -197,6 +197,11 @@ bool BuySignal(double &atrValue)
    return false;
 }
 
+double ForcedLot()
+{
+   return 0.02;
+}
+
 bool OpenTrade(ENUM_ORDER_TYPE type, double atrValue)
 {
    MqlTick tick;
@@ -213,8 +218,9 @@ bool OpenTrade(ENUM_ORDER_TYPE type, double atrValue)
    trade.SetExpertMagicNumber((int)MagicNumber);
    trade.SetDeviationInPoints(SlippagePoints);
    bool ok = false;
-   if(type == ORDER_TYPE_BUY) ok = trade.Buy(FixedLot, Sym, 0.0, sl, tp, "V26 BUY");
-   if(type == ORDER_TYPE_SELL) ok = trade.Sell(FixedLot, Sym, 0.0, sl, tp, "V26 SELL");
+   double lot = ForcedLot();
+   if(type == ORDER_TYPE_BUY) ok = trade.Buy(lot, Sym, 0.0, sl, tp, "V26 BUY");
+   if(type == ORDER_TYPE_SELL) ok = trade.Sell(lot, Sym, 0.0, sl, tp, "V26 SELL");
    if(ok)
    {
       tradesToday++;
