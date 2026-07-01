@@ -1,0 +1,78 @@
+name: EA V26 3Y BACKTEST
+
+on:
+  workflow_dispatch:
+    inputs:
+      deposit:
+        required: true
+        default: "100000"
+        type: string
+      leverage:
+        required: true
+        default: "1:100"
+        type: string
+      model:
+        required: true
+        default: "0"
+        type: string
+      timeout_minutes:
+        required: true
+        default: "350"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 420
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - chunk: Y1
+            from_date: "2023.06.21"
+            to_date: "2024.06.21"
+          - chunk: Y2
+            from_date: "2024.06.21"
+            to_date: "2025.06.21"
+          - chunk: Y3
+            from_date: "2025.06.21"
+            to_date: "2026.06.21"
+    env:
+      BT_SYMBOL: XAU_PUBLIC
+      BT_PERIOD: M5
+      BT_FROM_DATE: ${{ matrix.from_date }}
+      BT_TO_DATE: ${{ matrix.to_date }}
+      BT_DEPOSIT: ${{ inputs.deposit }}
+      BT_LEVERAGE: ${{ inputs.leverage }}
+      BT_MODEL: ${{ inputs.model }}
+      BT_TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
+      PUBLIC_FETCH_TIMEOUT_SECONDS: "30"
+      PUBLIC_FETCH_RETRIES: "3"
+      PUBLIC_MAX_DOWNLOAD_SECONDS: "20000"
+      PUBLIC_MAX_HISTORY_DAYS: "370"
+      PUBLIC_MIN_BARS_TO_STOP: "999999999"
+      PUBLIC_MIN_REQUIRED_BARS: "20000"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run EA V26 3Y chunk
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-ea-v26-public-backtest.ps1
+      - name: Analyze artifact
+        if: always()
+        shell: pwsh
+        run: |
+          if (!(Test-Path reports)) { New-Item -ItemType Directory -Force -Path reports | Out-Null }
+          Compress-Archive -Path reports/* -DestinationPath reports/_analysis_input.zip -Force
+          python scripts/analyze-public-artifact.py reports/_analysis_input.zip | Tee-Object -FilePath reports/PUBLIC_BACKTEST_ANALYSIS.json
+          python scripts/analyze-public-trade-quality.py reports --deposit ${{ inputs.deposit }} | Tee-Object -FilePath reports/PUBLIC_TRADE_QUALITY.json
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: EA-V26-3Y-${{ matrix.chunk }}-${{ github.run_number }}-${{ github.sha }}
+          path: reports/**
+          if-no-files-found: error
+          retention-days: 14
