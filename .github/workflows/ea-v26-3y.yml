@@ -5,7 +5,7 @@ on:
     inputs:
       deposit:
         required: true
-        default: "100000"
+        default: "15000"
         type: string
       leverage:
         required: true
@@ -107,7 +107,7 @@ jobs:
       PUBLIC_MIN_BARS_TO_STOP: "999999999"
       PUBLIC_MIN_REQUIRED_BARS: "20000"
       MT5_LOGIN: ${{ secrets.MT5_LOGIN }}
-      MT5_SECRET: ${{ secrets.MT5_SECRET }}
+      MT5_PASSWORD: ${{ secrets.MT5_SECRET }}
       MT5_SERVER: ${{ secrets.MT5_SERVER }}
     steps:
       - uses: actions/checkout@v4
