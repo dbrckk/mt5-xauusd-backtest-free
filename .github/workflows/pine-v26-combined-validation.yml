@@ -1,0 +1,103 @@
+name: PINE V26 COMBINED VALIDATION
+
+on:
+  workflow_dispatch:
+    inputs:
+      to_date:
+        required: true
+        default: "2026.06.21"
+        type: string
+      deposit:
+        required: true
+        default: "10000"
+        type: string
+      leverage:
+        required: true
+        default: "1:100"
+        type: string
+      model:
+        required: true
+        default: "0"
+        type: string
+      timeout_minutes:
+        required: true
+        default: "240"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 420
+    strategy:
+      fail-fast: false
+      matrix:
+        force_days: [31, 62, 93]
+    env:
+      BT_SYMBOL: XAU_PUBLIC
+      BT_PERIOD: M15
+      BT_FROM_DATE: "2026.01.01"
+      BT_TO_DATE: ${{ inputs.to_date }}
+      BT_DEPOSIT: ${{ inputs.deposit }}
+      BT_LEVERAGE: ${{ inputs.leverage }}
+      BT_MODEL: ${{ inputs.model }}
+      BT_TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
+      PUBLIC_FORCE_DAYS: ${{ matrix.force_days }}
+      PUBLIC_SINGLE_TIMEFRAME: "true"
+      PUBLIC_FETCH_TIMEOUT_SECONDS: "30"
+      PUBLIC_FETCH_RETRIES: "3"
+      PUBLIC_MAX_DOWNLOAD_SECONDS: "5400"
+      PUBLIC_MAX_HISTORY_DAYS: "140"
+      PUBLIC_MIN_BARS_TO_STOP: "0"
+      PUBLIC_REQUIRE_FULL_RANGE: "true"
+      PUBLIC_MIN_REQUIRED_BARS: "700"
+      MT5_LOGIN: ${{ secrets.MT5_LOGIN }}
+      MT5_PASSWORD: ${{ secrets.MT5_PASSWORD }}
+      MT5_SERVER: ${{ secrets.MT5_SERVER }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare reports
+        shell: pwsh
+        run: |
+          if (Test-Path reports) { Remove-Item reports -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path reports | Out-Null
+          Set-Content reports/CURRENT_PUBLIC_XAU_ONLY.txt "PINE_V26_COMBINED_VALIDATION"
+          Add-Content reports/CURRENT_PUBLIC_XAU_ONLY.txt "workflow=pine-v26-combined-validation.yml"
+          Add-Content reports/CURRENT_PUBLIC_XAU_ONLY.txt "matrix_force_days=${{ matrix.force_days }}"
+          Add-Content reports/CURRENT_PUBLIC_XAU_ONLY.txt "input_to_date=${{ inputs.to_date }}"
+          Add-Content reports/CURRENT_PUBLIC_XAU_ONLY.txt "sha=${{ github.sha }}"
+          Add-Content reports/CURRENT_PUBLIC_XAU_ONLY.txt "cooldown_minutes=30"
+      - name: Apply public diagnostic patch
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/apply-public-diagnostic-patch.ps1
+      - name: Force public set overrides
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/apply-public-set-overrides.ps1
+      - name: Patch MT5 installer wait
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/patch-mt5-install-wait.ps1
+      - name: Run data backtest
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-public-history-backtest.ps1 2>&1 | Tee-Object -FilePath reports/run_public_backtest_step.log
+          $code = $LASTEXITCODE
+          Add-Content reports/CURRENT_PUBLIC_XAU_ONLY.txt "run_public_backtest_exit_code=$code"
+          if ($code -ne 0) { exit $code }
+      - name: Analyze combined strategy
+        if: always()
+        shell: pwsh
+        run: |
+          Compress-Archive -Path reports/* -DestinationPath reports/_analysis_input.zip -Force
+          python scripts/analyze-public-artifact.py reports/_analysis_input.zip | Tee-Object -FilePath reports/PUBLIC_BACKTEST_ANALYSIS.json
+          python scripts/analyze-public-trade-quality.py reports --deposit ${{ inputs.deposit }} | Tee-Object -FilePath reports/PUBLIC_TRADE_QUALITY.json
+          python scripts/analyze-pine-v26-combined.py reports --deposit ${{ inputs.deposit }} | Tee-Object -FilePath reports/PINE_V26_COMBINED_RUN.json
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PINE-V26-COMBINED-${{ matrix.force_days }}D-${{ github.run_number }}-${{ github.sha }}
+          path: reports/**
+          if-no-files-found: error
+          retention-days: 14
