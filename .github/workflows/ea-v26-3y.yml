@@ -1,4 +1,4 @@
-name: EA V26 3Y BACKTEST
+name: EA V26 3Y MTF BACKTEST
 
 on:
   workflow_dispatch:
@@ -32,17 +32,68 @@ jobs:
       matrix:
         include:
           - chunk: Y1
+            period: M15
+            from_date: "2023.06.21"
+            to_date: "2024.06.21"
+          - chunk: Y1
+            period: M30
+            from_date: "2023.06.21"
+            to_date: "2024.06.21"
+          - chunk: Y1
+            period: H1
+            from_date: "2023.06.21"
+            to_date: "2024.06.21"
+          - chunk: Y1
+            period: H2
+            from_date: "2023.06.21"
+            to_date: "2024.06.21"
+          - chunk: Y1
+            period: H4
             from_date: "2023.06.21"
             to_date: "2024.06.21"
           - chunk: Y2
+            period: M15
+            from_date: "2024.06.21"
+            to_date: "2025.06.21"
+          - chunk: Y2
+            period: M30
+            from_date: "2024.06.21"
+            to_date: "2025.06.21"
+          - chunk: Y2
+            period: H1
+            from_date: "2024.06.21"
+            to_date: "2025.06.21"
+          - chunk: Y2
+            period: H2
+            from_date: "2024.06.21"
+            to_date: "2025.06.21"
+          - chunk: Y2
+            period: H4
             from_date: "2024.06.21"
             to_date: "2025.06.21"
           - chunk: Y3
+            period: M15
+            from_date: "2025.06.21"
+            to_date: "2026.06.21"
+          - chunk: Y3
+            period: M30
+            from_date: "2025.06.21"
+            to_date: "2026.06.21"
+          - chunk: Y3
+            period: H1
+            from_date: "2025.06.21"
+            to_date: "2026.06.21"
+          - chunk: Y3
+            period: H2
+            from_date: "2025.06.21"
+            to_date: "2026.06.21"
+          - chunk: Y3
+            period: H4
             from_date: "2025.06.21"
             to_date: "2026.06.21"
     env:
       BT_SYMBOL: XAU_PUBLIC
-      BT_PERIOD: M5
+      BT_PERIOD: ${{ matrix.period }}
       BT_FROM_DATE: ${{ matrix.from_date }}
       BT_TO_DATE: ${{ matrix.to_date }}
       BT_DEPOSIT: ${{ inputs.deposit }}
@@ -57,7 +108,7 @@ jobs:
       PUBLIC_MIN_REQUIRED_BARS: "20000"
     steps:
       - uses: actions/checkout@v4
-      - name: Run EA V26 3Y chunk
+      - name: Run EA V26 3Y MTF chunk
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-ea-v26-public-backtest.ps1
       - name: Analyze artifact
@@ -72,7 +123,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: EA-V26-3Y-${{ matrix.chunk }}-${{ github.run_number }}-${{ github.sha }}
+          name: EA-V26-3Y-${{ matrix.period }}-${{ matrix.chunk }}-${{ github.run_number }}-${{ github.sha }}
           path: reports/**
           if-no-files-found: error
           retention-days: 14
