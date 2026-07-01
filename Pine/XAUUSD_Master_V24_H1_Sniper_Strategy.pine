@@ -1,19 +1,23 @@
 //@version=5
-strategy("XAUUSD Master V24 - H1 Sniper Core", overlay=true, pyramiding=0, process_orders_on_close=true, calc_on_every_tick=false, initial_capital=10000, commission_type=strategy.commission.percent, commission_value=0.0, max_labels_count=500, max_lines_count=500)
+strategy("XAUUSD Master V24 Ultimate - H1 SELL Core", overlay=true, pyramiding=0, process_orders_on_close=true, calc_on_every_tick=false, initial_capital=10000, commission_type=strategy.commission.percent, commission_value=0.0, max_labels_count=500, max_lines_count=500)
 
 // -----------------------------------------------------------------------------
-// XAUUSD Master V24 - H1 Sniper Core
-// Design:
-// - H1 Pine-strict core decides the trade.
-// - M5 only refines the entry after a valid H1 signal.
-// - H2/H4 are optional regime filters.
-// - No independent M5/M15/M30 entries.
+// XAUUSD Master V24 Ultimate
+// Backtest-selected profile from 93D optimization:
+// - Direction: SELL only
+// - Entry: H1 close
+// - TP: ATR x 2.5
+// - SL: ATR x 2.0
+// - Regime filters: disabled by default
+// - M5 sniper: optional, disabled by default
 // Recommended chart: XAUUSD/GOLD 5 minutes.
 // -----------------------------------------------------------------------------
 
+// ===== General =====
 groupGeneral = "General"
-profile = input.string("H1 sniper balanced", "Profile", options=["H1 proven", "H1 sniper balanced", "H1 sniper high winrate", "Custom"], group=groupGeneral)
-entryMode = input.string("M5 sniper", "Entry mode", options=["M5 sniper", "H1 close"], group=groupGeneral)
+profile = input.string("V24 Ultimate", "Profile", options=["V24 Ultimate", "H1 proven all", "H1 sniper", "Custom"], group=groupGeneral)
+directionMode = input.string("SELL only", "Direction", options=["SELL only", "BUY only", "BUY and SELL"], group=groupGeneral)
+entryMode = input.string("H1 close", "Entry mode", options=["H1 close", "M5 sniper"], group=groupGeneral)
 maxTradesPerDay = input.int(2, "Max trades/day", minval=1, maxval=4, group=groupGeneral)
 minCooldownMin = input.int(180, "Cooldown minutes", minval=0, maxval=1440, group=groupGeneral)
 showLabels = input.bool(true, "Show labels", group=groupGeneral)
@@ -30,8 +34,8 @@ h1VolLen = input.int(20, "H1 volume SMA", minval=2, group=groupH1)
 h1VolMult = input.float(0.80, "H1 volume > SMA x", step=0.05, group=groupH1)
 useH1Slope = input.bool(false, "Require H1 EMA200 slope", group=groupH1)
 
-// ===== Sniper entry =====
-groupSniper = "M5 sniper"
+// ===== Optional M5 sniper =====
+groupSniper = "Optional M5 sniper"
 sniperWindowBars = input.int(12, "Max M5 bars after H1 signal", minval=1, maxval=96, group=groupSniper)
 m5FastLen = input.int(9, "M5 fast EMA", minval=1, group=groupSniper)
 m5SlowLen = input.int(21, "M5 slow EMA", minval=2, group=groupSniper)
@@ -44,7 +48,7 @@ minBodyRatio = input.float(0.30, "M5 min body/range", step=0.01, group=groupSnip
 
 // ===== Regime filters =====
 groupRegime = "Regime filters"
-useH2Filter = input.bool(true, "Block H2 opposite", group=groupRegime)
+useH2Filter = input.bool(false, "Block H2 opposite", group=groupRegime)
 useH4Filter = input.bool(false, "Block H4 opposite", group=groupRegime)
 useM15Confirm = input.bool(false, "Require M15 same direction", group=groupRegime)
 useM30Confirm = input.bool(false, "Require M30 same direction", group=groupRegime)
@@ -67,8 +71,8 @@ useTimeExit = input.bool(false, "Use time exit if profitable", group=groupExit)
 maxHoldBars = input.int(48, "Max hold M5 bars", minval=1, maxval=1000, group=groupExit)
 
 // ===== Profile values =====
-tpATR = profile == "H1 proven" ? 2.50 : profile == "H1 sniper balanced" ? 2.20 : profile == "H1 sniper high winrate" ? 1.45 : customTP
-slATR = profile == "H1 proven" ? 2.00 : profile == "H1 sniper balanced" ? 1.45 : profile == "H1 sniper high winrate" ? 1.00 : customSL
+tpATR = profile == "V24 Ultimate" ? 2.50 : profile == "H1 proven all" ? 2.50 : profile == "H1 sniper" ? 2.20 : customTP
+slATR = profile == "V24 Ultimate" ? 2.00 : profile == "H1 proven all" ? 2.00 : profile == "H1 sniper" ? 1.45 : customSL
 
 // ===== Utilities =====
 f_session_ok() =>
@@ -92,11 +96,7 @@ f_h1_signal() =>
     longSig = ta.crossover(fast, slow) and close > trend and slopeLongOk and rsi > 50 and rsi < 68 and volOk
     shortSig = ta.crossunder(fast, slow) and close < trend and slopeShortOk and rsi < 50 and rsi > 32 and volOk
     dir = longSig ? 1 : shortSig ? -1 : 0
-    score = 0.0
-    score += dir != 0 ? 50.0 : 0.0
-    score += volOk ? 10.0 : 0.0
-    score += math.abs(fast - slow) / close * 1000.0
-    [dir, close, atr, score, time]
+    [dir, close, atr, time]
 
 f_trend_state() =>
     fast = ta.ema(close, 9)
@@ -108,18 +108,21 @@ f_trend_state() =>
     bear = close < trend and fast < slow and slope < 0 and rsi < 50
     bull ? 1 : bear ? -1 : 0
 
-[h1Dir, h1Close, h1Atr, h1Score, h1Time] = request.security(syminfo.tickerid, "60", f_h1_signal(), barmerge.gaps_off, barmerge.lookahead_off)
+[h1DirRaw, h1Close, h1Atr, h1Time] = request.security(syminfo.tickerid, "60", f_h1_signal(), barmerge.gaps_off, barmerge.lookahead_off)
 st15 = request.security(syminfo.tickerid, "15", f_trend_state(), barmerge.gaps_off, barmerge.lookahead_off)
 st30 = request.security(syminfo.tickerid, "30", f_trend_state(), barmerge.gaps_off, barmerge.lookahead_off)
 st120 = request.security(syminfo.tickerid, "120", f_trend_state(), barmerge.gaps_off, barmerge.lookahead_off)
 st240 = request.security(syminfo.tickerid, "240", f_trend_state(), barmerge.gaps_off, barmerge.lookahead_off)
+
+allowLong = directionMode == "BUY only" or directionMode == "BUY and SELL"
+allowShort = directionMode == "SELL only" or directionMode == "BUY and SELL"
+h1Dir = h1DirRaw == 1 and allowLong ? 1 : h1DirRaw == -1 and allowShort ? -1 : 0
 
 // ===== Pending H1 signal =====
 var int lastH1SignalTime = na
 var int pendingDir = 0
 var float pendingClose = na
 var float pendingAtr = na
-var float pendingScore = na
 var int pendingStartBar = na
 
 newH1Signal = h1Dir != 0 and (na(lastH1SignalTime) or h1Time != lastH1SignalTime)
@@ -132,7 +135,6 @@ if newH1Signal and newRegimeOk
     pendingDir := int(h1Dir)
     pendingClose := h1Close
     pendingAtr := h1Atr
-    pendingScore := h1Score
     pendingStartBar := bar_index
 
 pendingAge = not na(pendingStartBar) ? bar_index - pendingStartBar : 999999
@@ -141,10 +143,9 @@ if pendingAge > sniperWindowBars
     pendingDir := 0
     pendingClose := na
     pendingAtr := na
-    pendingScore := na
     pendingStartBar := na
 
-// ===== M5 sniper trigger =====
+// ===== M5 optional sniper trigger =====
 m5Fast = ta.ema(close, m5FastLen)
 m5Slow = ta.ema(close, m5SlowLen)
 m5Rsi = ta.rsi(close, m5RsiLen)
@@ -180,24 +181,24 @@ longSignal = canTrade and (entryMode == "H1 close" ? h1CloseLong : sniperLong)
 shortSignal = canTrade and (entryMode == "H1 close" ? h1CloseShort : sniperShort)
 
 if longSignal
-    strategy.entry("BUY", strategy.long, comment="BUY V24 H1->M5")
+    strategy.entry("BUY", strategy.long, comment="BUY V24")
     tradesToday += 1
     lastEntryMs := time
     entryAtr := pendingAtr
     entryBar := bar_index
     entrySource := entryMode
     pendingDir := 0
-    alert("XAUUSD V24 BUY | H1 core | entry=" + entryMode + " | TP=" + str.tostring(tpATR) + " | SL=" + str.tostring(slATR), alert.freq_once_per_bar_close)
+    alert("XAUUSD V24 BUY | entry=" + entryMode + " | TP=" + str.tostring(tpATR) + " | SL=" + str.tostring(slATR), alert.freq_once_per_bar_close)
 
 if shortSignal
-    strategy.entry("SELL", strategy.short, comment="SELL V24 H1->M5")
+    strategy.entry("SELL", strategy.short, comment="SELL V24 Ultimate")
     tradesToday += 1
     lastEntryMs := time
     entryAtr := pendingAtr
     entryBar := bar_index
     entrySource := entryMode
     pendingDir := 0
-    alert("XAUUSD V24 SELL | H1 core | entry=" + entryMode + " | TP=" + str.tostring(tpATR) + " | SL=" + str.tostring(slATR), alert.freq_once_per_bar_close)
+    alert("XAUUSD V24 SELL | entry=" + entryMode + " | TP=" + str.tostring(tpATR) + " | SL=" + str.tostring(slATR), alert.freq_once_per_bar_close)
 
 // ===== Exits =====
 atrExit = na(entryAtr) ? ta.atr(h1AtrLen) : entryAtr
@@ -236,29 +237,32 @@ plot(strategy.position_size < 0 ? shortTP : na, "Short TP", color=color.new(colo
 plot(strategy.position_size < 0 ? shortSL : na, "Short SL", color=color.new(color.red, 0), style=plot.style_linebr)
 
 if showLabels and longSignal
-    label.new(bar_index, low, "BUY V24\nH1 -> M5\nTP " + str.tostring(tpATR) + " SL " + str.tostring(slATR), style=label.style_label_up, color=color.new(color.green, 0), textcolor=color.white)
+    label.new(bar_index, low, "BUY V24\n" + entryMode + "\nTP " + str.tostring(tpATR) + " SL " + str.tostring(slATR), style=label.style_label_up, color=color.new(color.green, 0), textcolor=color.white)
 if showLabels and shortSignal
-    label.new(bar_index, high, "SELL V24\nH1 -> M5\nTP " + str.tostring(tpATR) + " SL " + str.tostring(slATR), style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white)
+    label.new(bar_index, high, "SELL V24\n" + entryMode + "\nTP " + str.tostring(tpATR) + " SL " + str.tostring(slATR), style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white)
 
-var table dash = table.new(position.top_right, 2, 9, border_width=1)
+// ===== Dashboard =====
+var table dash = table.new(position.top_right, 2, 10, border_width=1)
 if showDashboard and barstate.islast
     winrate = strategy.closedtrades > 0 ? strategy.wintrades / strategy.closedtrades * 100.0 : na
     pf = strategy.grossloss != 0.0 ? strategy.grossprofit / math.abs(strategy.grossloss) : na
-    table.cell(dash, 0, 0, "XAU V24", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 0, 0, "XAU V24 Ultimate", text_color=color.white, bgcolor=color.new(color.black, 0))
     table.cell(dash, 1, 0, profile, text_color=color.white, bgcolor=color.new(color.black, 0))
-    table.cell(dash, 0, 1, "Entry")
-    table.cell(dash, 1, 1, entryMode)
-    table.cell(dash, 0, 2, "TP / SL")
-    table.cell(dash, 1, 2, str.tostring(tpATR) + " / " + str.tostring(slATR))
-    table.cell(dash, 0, 3, "Pending")
-    table.cell(dash, 1, 3, pendingDir == 1 ? "BUY" : pendingDir == -1 ? "SELL" : "none")
-    table.cell(dash, 0, 4, "H2/H4")
-    table.cell(dash, 1, 4, str.tostring(st120) + " / " + str.tostring(st240))
-    table.cell(dash, 0, 5, "Trades today")
-    table.cell(dash, 1, 5, str.tostring(tradesToday) + " / " + str.tostring(maxTradesPerDay))
-    table.cell(dash, 0, 6, "Closed")
-    table.cell(dash, 1, 6, str.tostring(strategy.closedtrades))
-    table.cell(dash, 0, 7, "Winrate")
-    table.cell(dash, 1, 7, na(winrate) ? "n/a" : str.tostring(winrate, "#.0") + "%")
-    table.cell(dash, 0, 8, "PF")
-    table.cell(dash, 1, 8, na(pf) ? "n/a" : str.tostring(pf, "#.00"))
+    table.cell(dash, 0, 1, "Direction")
+    table.cell(dash, 1, 1, directionMode)
+    table.cell(dash, 0, 2, "Entry")
+    table.cell(dash, 1, 2, entryMode)
+    table.cell(dash, 0, 3, "TP / SL")
+    table.cell(dash, 1, 3, str.tostring(tpATR) + " / " + str.tostring(slATR))
+    table.cell(dash, 0, 4, "Pending")
+    table.cell(dash, 1, 4, pendingDir == 1 ? "BUY" : pendingDir == -1 ? "SELL" : "none")
+    table.cell(dash, 0, 5, "H2/H4")
+    table.cell(dash, 1, 5, str.tostring(st120) + " / " + str.tostring(st240))
+    table.cell(dash, 0, 6, "Trades today")
+    table.cell(dash, 1, 6, str.tostring(tradesToday) + " / " + str.tostring(maxTradesPerDay))
+    table.cell(dash, 0, 7, "Closed")
+    table.cell(dash, 1, 7, str.tostring(strategy.closedtrades))
+    table.cell(dash, 0, 8, "Winrate")
+    table.cell(dash, 1, 8, na(winrate) ? "n/a" : str.tostring(winrate, "#.0") + "%")
+    table.cell(dash, 0, 9, "PF")
+    table.cell(dash, 1, 9, na(pf) ? "n/a" : str.tostring(pf, "#.00"))
