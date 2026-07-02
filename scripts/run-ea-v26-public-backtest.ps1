@@ -19,7 +19,7 @@ Add-Content (Join-Path $reportsRoot "CURRENT_PUBLIC_XAU_ONLY.txt") "ea=MQL5/Expe
 Add-Content (Join-Path $reportsRoot "CURRENT_PUBLIC_XAU_ONLY.txt") "fixed_lot=0.02"
 Add-Content (Join-Path $reportsRoot "CURRENT_PUBLIC_XAU_ONLY.txt") "max_trades_per_day=8"
 Add-Content (Join-Path $reportsRoot "CURRENT_PUBLIC_XAU_ONLY.txt") "cooldown_minutes=30"
-Add-Content (Join-Path $reportsRoot "CURRENT_PUBLIC_XAU_ONLY.txt") "profile=v26_expanded_atr_retest"
+Add-Content (Join-Path $reportsRoot "CURRENT_PUBLIC_XAU_ONLY.txt") "profile=v26_m15_filtered_retest"
 Add-Content (Join-Path $reportsRoot "CURRENT_PUBLIC_XAU_ONLY.txt") "full_requested_window=true"
 
 $sourceRunner = Join-Path $repo "scripts/run-public-history-backtest.ps1"
@@ -31,7 +31,7 @@ $newEa = '$eaSource = Join-Path $repo "MQL5\Experts\XAUUSD_V26_PropFirm_100k.mq5
 $txt = $txt.Replace($oldEa, $newEa)
 
 $oldTune = 'Tune-EA-ForPublicBacktest $eaSource $reportsRoot'
-$newTune = 'Set-Content -Path (Join-Path $reportsRoot "ea_v26_settings.txt") -Value "V26 expanded ATR retest: FixedLot=0.02; MaxTradesPerDay=8; CooldownMinutes=30; stricter signal filters" -Encoding UTF8'
+$newTune = 'Set-Content -Path (Join-Path $reportsRoot "ea_v26_settings.txt") -Value "V26 filtered retest: FixedLot=0.02; MaxTradesPerDay=8; CooldownMinutes=30; session 11-17; aligned filters" -Encoding UTF8'
 $txt = $txt.Replace($oldTune, $newTune)
 
 $txt = $txt.Replace('"InpFixedLot=0.01"', '"FixedLot=0.02"')
@@ -39,12 +39,12 @@ $txt = $txt.Replace('"InpMaxNewEntriesPerDay=80"', '"MaxTradesPerDay=8"')
 $txt = $txt.Replace('"InpMinMinutesBetweenEntries=0"', '"CooldownMinutes=30"')
 $txt = $txt.Replace('"InpStrategyProfile=0"', '"BuyFrequencyMode=false"')
 $txt = $txt.Replace('"InpUseRiskLot=false"', '"EnableBuy=true"')
-$txt = $txt.Replace('"InpForceTenKLotBand=false"', '"EnableSell=true"')
+$txt = $txt.Replace('"InpForceTenKLotBand=false"', '"EnableSell=false"')
 $txt = $txt.Replace('"InpMaxAllowedSingleLot=0.10"', '"UseSession=true"')
-$txt = $txt.Replace('"InpMaxAllowedTotalLots=0.20"', '"SessionStartHour=8"')
+$txt = $txt.Replace('"InpMaxAllowedTotalLots=0.20"', '"SessionStartHour=11"')
 $txt = $txt.Replace('"InpMaxTotalLots=0.20"', '"SessionEndHour=17"')
 $txt = $txt.Replace('"InpCapitalProtectionMode=false"', '"BlockFridayAfter16=true"')
-$txt = $txt.Replace('"InpVerboseLog=true"', '"InpVerboseLog=true", "SlippagePoints=220", "BrokerStopBufferPoints=80", "UseExecutionTimeframeGate=true", "UseExecutionTrendFilter=true", "UseBuyH1Filter=true", "BlockBuyH2Bear=true", "BlockBuyH4Bear=true", "SellVolMult=1.15", "BuyVolMult=1.10", "BuyMinRsi=53.0", "BuyMaxRsi=67.0", "BuyMinBodyRatio=0.34", "SellTP_ATR=4.20", "SellSL_ATR=1.45", "BuyTP_ATR=3.20", "BuySL_ATR=1.45"')
+$txt = $txt.Replace('"InpVerboseLog=true"', '"InpVerboseLog=true", "SlippagePoints=180", "BrokerStopBufferPoints=60", "UseExecutionTimeframeGate=true", "UseExecutionTrendFilter=true", "UseBuyH1Filter=true", "BlockBuyH2Bear=true", "BlockBuyH4Bear=true", "BuyVolMult=1.00", "BuyMinRsi=52.0", "BuyMaxRsi=68.0", "BuyMinBodyRatio=0.30", "BuyTP_ATR=0.90", "BuySL_ATR=1.80"')
 
 Set-Content -Path $generatedRunner -Value $txt -Encoding UTF8
 
