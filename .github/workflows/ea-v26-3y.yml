@@ -43,14 +43,6 @@ jobs:
             period: H1
             from_date: "2023.06.21"
             to_date: "2024.06.21"
-          - chunk: Y1
-            period: H2
-            from_date: "2023.06.21"
-            to_date: "2024.06.21"
-          - chunk: Y1
-            period: H4
-            from_date: "2023.06.21"
-            to_date: "2024.06.21"
           - chunk: Y2
             period: M15
             from_date: "2024.06.21"
@@ -63,14 +55,6 @@ jobs:
             period: H1
             from_date: "2024.06.21"
             to_date: "2025.06.21"
-          - chunk: Y2
-            period: H2
-            from_date: "2024.06.21"
-            to_date: "2025.06.21"
-          - chunk: Y2
-            period: H4
-            from_date: "2024.06.21"
-            to_date: "2025.06.21"
           - chunk: Y3
             period: M15
             from_date: "2025.06.21"
@@ -81,14 +65,6 @@ jobs:
             to_date: "2026.06.21"
           - chunk: Y3
             period: H1
-            from_date: "2025.06.21"
-            to_date: "2026.06.21"
-          - chunk: Y3
-            period: H2
-            from_date: "2025.06.21"
-            to_date: "2026.06.21"
-          - chunk: Y3
-            period: H4
             from_date: "2025.06.21"
             to_date: "2026.06.21"
     env:
