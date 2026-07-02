@@ -35,36 +35,12 @@ jobs:
             period: M15
             from_date: "2023.06.21"
             to_date: "2024.06.21"
-          - chunk: Y1
-            period: M30
-            from_date: "2023.06.21"
-            to_date: "2024.06.21"
-          - chunk: Y1
-            period: H1
-            from_date: "2023.06.21"
-            to_date: "2024.06.21"
           - chunk: Y2
             period: M15
             from_date: "2024.06.21"
             to_date: "2025.06.21"
-          - chunk: Y2
-            period: M30
-            from_date: "2024.06.21"
-            to_date: "2025.06.21"
-          - chunk: Y2
-            period: H1
-            from_date: "2024.06.21"
-            to_date: "2025.06.21"
           - chunk: Y3
             period: M15
-            from_date: "2025.06.21"
-            to_date: "2026.06.21"
-          - chunk: Y3
-            period: M30
-            from_date: "2025.06.21"
-            to_date: "2026.06.21"
-          - chunk: Y3
-            period: H1
             from_date: "2025.06.21"
             to_date: "2026.06.21"
     env:
@@ -87,6 +63,22 @@ jobs:
       MT5_SERVER: ${{ secrets.MT5_SERVER }}
     steps:
       - uses: actions/checkout@v4
+      - name: Apply strict M15 profile
+        shell: pwsh
+        run: |
+          $p = "scripts/run-ea-v26-public-backtest.ps1"
+          $t = Get-Content $p -Raw
+          $t = $t.Replace('"fixed_lot=0.02"', '"fixed_lot=0.04"')
+          $t = $t.Replace('"max_trades_per_day=8"', '"max_trades_per_day=5"')
+          $t = $t.Replace('"profile=v26_m15_filtered_retest"', '"profile=v26_strict_m15_0_04_retest"')
+          $t = $t.Replace('FixedLot=0.02; MaxTradesPerDay=8; CooldownMinutes=30; session 11-17; aligned filters', 'FixedLot=0.04; MaxTradesPerDay=5; CooldownMinutes=30; session 15-16; aligned filters')
+          $t = $t.Replace('"FixedLot=0.02"', '"FixedLot=0.04"')
+          $t = $t.Replace('"MaxTradesPerDay=8"', '"MaxTradesPerDay=5"')
+          $t = $t.Replace('"SessionStartHour=11"', '"SessionStartHour=15"')
+          $t = $t.Replace('"SessionEndHour=17"', '"SessionEndHour=16"')
+          $t = $t.Replace('"BuyTP_ATR=0.90"', '"BuyTP_ATR=0.80"')
+          $t = $t.Replace('"BuySL_ATR=1.80"', '"BuySL_ATR=1.70"')
+          Set-Content $p $t -Encoding UTF8
       - name: Run EA V26 3Y MTF chunk
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-ea-v26-public-backtest.ps1
