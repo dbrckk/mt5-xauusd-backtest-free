@@ -4,8 +4,8 @@
 //| Defaults: 15k demo test, forced 0.02 lot, max 8 trades/day        |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "1.01"
-#property description "XAUUSD V26 Combined EA - forced 0.02 lot demo test"
+#property version   "1.02"
+#property description "XAUUSD V26 Combined EA - hardened execution, forced 0.02 lot, MTF test modes"
 
 #include <Trade/Trade.mqh>
 
@@ -16,7 +16,10 @@ input double FixedLot = 0.02;
 input int MaxTradesPerDay = 8;
 input int CooldownMinutes = 30;
 input ulong MagicNumber = 260100;
-input int SlippagePoints = 50;
+input int SlippagePoints = 80;
+input int BrokerStopBufferPoints = 30;
+input bool UseExecutionTimeframeGate = true;
+input bool UseExecutionTrendFilter = true;
 
 input bool UseSession = true;
 input int SessionStartHour = 8;
@@ -52,6 +55,8 @@ int tradesToday = 0;
 int currentYear = -1;
 int currentDayOfYear = -1;
 datetime lastEntryTime = 0;
+datetime lastAttemptTime = 0;
+datetime lastExecutionBarTime = 0;
 datetime lastSellBarTime = 0;
 datetime lastBuyBarTime = 0;
 
@@ -59,6 +64,11 @@ int h1FastHandle, h1SlowHandle, h1TrendHandle, h1RsiHandle, h1AtrHandle;
 int m15FastHandle, m15SlowHandle, m15TrendHandle, m15RsiHandle, m15AtrHandle;
 int h2FastHandle, h2SlowHandle, h2TrendHandle, h2RsiHandle;
 int h4FastHandle, h4SlowHandle, h4TrendHandle, h4RsiHandle;
+
+ENUM_TIMEFRAMES ExecutionTF()
+{
+   return (ENUM_TIMEFRAMES)_Period;
+}
 
 bool CopyOne(int handle, int shift, double &value)
 {
@@ -106,6 +116,16 @@ void ResetDailyCounterIfNeeded()
    }
 }
 
+bool IsNewExecutionBar()
+{
+   if(!UseExecutionTimeframeGate) return true;
+   MqlRates r[];
+   if(!CopyRatesData(ExecutionTF(), 3, r)) return false;
+   if(r[1].time == lastExecutionBarTime) return false;
+   lastExecutionBarTime = r[1].time;
+   return true;
+}
+
 bool HasOpenPosition()
 {
    for(int i=PositionsTotal()-1; i>=0; i--)
@@ -133,6 +153,28 @@ bool TrendState(ENUM_TIMEFRAMES tf, bool wantBull)
    bool bull = r[1].close > trend1 && fast1 > slow1 && trend1 > trend4 && rsi1 > 50.0;
    bool bear = r[1].close < trend1 && fast1 < slow1 && trend1 < trend4 && rsi1 < 50.0;
    return wantBull ? bull : bear;
+}
+
+bool ExecutionTrendOk(ENUM_ORDER_TYPE type)
+{
+   if(!UseExecutionTrendFilter) return true;
+   ENUM_TIMEFRAMES tf = ExecutionTF();
+   if(tf == PERIOD_H1)
+   {
+      if(type == ORDER_TYPE_BUY && TrendState(PERIOD_H1, false)) return false;
+      if(type == ORDER_TYPE_SELL && TrendState(PERIOD_H1, true)) return false;
+   }
+   if(tf == PERIOD_H2)
+   {
+      if(type == ORDER_TYPE_BUY && TrendState(PERIOD_H2, false)) return false;
+      if(type == ORDER_TYPE_SELL && TrendState(PERIOD_H2, true)) return false;
+   }
+   if(tf == PERIOD_H4)
+   {
+      if(type == ORDER_TYPE_BUY && TrendState(PERIOD_H4, false)) return false;
+      if(type == ORDER_TYPE_SELL && TrendState(PERIOD_H4, true)) return false;
+   }
+   return true;
 }
 
 bool SellSignal(double &atrValue)
@@ -202,25 +244,120 @@ double ForcedLot()
    return 0.02;
 }
 
-bool OpenTrade(ENUM_ORDER_TYPE type, double atrValue)
+double NormalizeVolume(double lot)
 {
-   MqlTick tick;
-   if(!SymbolInfoTick(Sym, tick)) return false;
+   double minLot = SymbolInfoDouble(Sym, SYMBOL_VOLUME_MIN);
+   double maxLot = SymbolInfoDouble(Sym, SYMBOL_VOLUME_MAX);
+   double step = SymbolInfoDouble(Sym, SYMBOL_VOLUME_STEP);
+   if(step <= 0.0) step = 0.01;
+   if(lot < minLot || lot > maxLot) return 0.0;
+   double steps = MathRound((lot - minLot) / step);
+   double normalized = minLot + steps * step;
+   if(MathAbs(normalized - lot) > 0.0000001) return 0.0;
+   return NormalizeDouble(normalized, 2);
+}
+
+double TickSize()
+{
+   double tickSize = SymbolInfoDouble(Sym, SYMBOL_TRADE_TICK_SIZE);
+   double point = SymbolInfoDouble(Sym, SYMBOL_POINT);
+   if(tickSize <= 0.0) tickSize = point;
+   if(tickSize <= 0.0) tickSize = 0.01;
+   return tickSize;
+}
+
+double NormalizePrice(double price)
+{
    int digits = (int)SymbolInfoInteger(Sym, SYMBOL_DIGITS);
-   double price = type == ORDER_TYPE_BUY ? tick.ask : tick.bid;
+   double tickSize = TickSize();
+   return NormalizeDouble(MathRound(price / tickSize) * tickSize, digits);
+}
+
+double MinStopDistance()
+{
+   double point = SymbolInfoDouble(Sym, SYMBOL_POINT);
+   if(point <= 0.0) point = 0.01;
+   int stopLevel = (int)SymbolInfoInteger(Sym, SYMBOL_TRADE_STOPS_LEVEL);
+   int freezeLevel = (int)SymbolInfoInteger(Sym, SYMBOL_TRADE_FREEZE_LEVEL);
+   int minPoints = (int)MathMax(stopLevel, freezeLevel) + BrokerStopBufferPoints;
+   double minDistance = (double)minPoints * point;
+   minDistance = MathMax(minDistance, 2.0 * TickSize());
+   return minDistance;
+}
+
+bool BuildStops(ENUM_ORDER_TYPE type, double entryPrice, double atrValue, double &sl, double &tp)
+{
+   if(atrValue <= 0.0) return false;
    double tpMult = type == ORDER_TYPE_BUY ? BuyTP_ATR : SellTP_ATR;
    double slMult = type == ORDER_TYPE_BUY ? BuySL_ATR : SellSL_ATR;
-   double sl = type == ORDER_TYPE_BUY ? price - atrValue * slMult : price + atrValue * slMult;
-   double tp = type == ORDER_TYPE_BUY ? price + atrValue * tpMult : price - atrValue * tpMult;
-   sl = NormalizeDouble(sl, digits);
-   tp = NormalizeDouble(tp, digits);
+   double minDistance = MinStopDistance();
+   double slDistance = MathMax(atrValue * slMult, minDistance);
+   double tpDistance = MathMax(atrValue * tpMult, minDistance);
+
+   if(type == ORDER_TYPE_BUY)
+   {
+      sl = NormalizePrice(entryPrice - slDistance);
+      tp = NormalizePrice(entryPrice + tpDistance);
+      if(sl >= entryPrice || tp <= entryPrice) return false;
+      if((entryPrice - sl) < minDistance || (tp - entryPrice) < minDistance) return false;
+   }
+   else
+   {
+      sl = NormalizePrice(entryPrice + slDistance);
+      tp = NormalizePrice(entryPrice - tpDistance);
+      if(sl <= entryPrice || tp >= entryPrice) return false;
+      if((sl - entryPrice) < minDistance || (entryPrice - tp) < minDistance) return false;
+   }
+   return true;
+}
+
+bool PlaceOrder(ENUM_ORDER_TYPE type, double lot, double price, double sl, double tp, string comment)
+{
+   bool ok = false;
+   if(type == ORDER_TYPE_BUY) ok = trade.Buy(lot, Sym, price, sl, tp, comment);
+   if(type == ORDER_TYPE_SELL) ok = trade.Sell(lot, Sym, price, sl, tp, comment);
+   if(ok) return true;
+
+   uint rc = trade.ResultRetcode();
+   bool fallbackAllowed = (rc == TRADE_RETCODE_INVALID_PRICE || rc == TRADE_RETCODE_INVALID_STOPS || rc == TRADE_RETCODE_PRICE_CHANGED || rc == TRADE_RETCODE_REQUOTE);
+   if(!fallbackAllowed) return false;
+
+   MqlTick retryTick;
+   if(!SymbolInfoTick(Sym, retryTick)) return false;
+   double retryPrice = NormalizePrice(type == ORDER_TYPE_BUY ? retryTick.ask : retryTick.bid);
+   if(!BuildStops(type, retryPrice, MathAbs(tp - sl), sl, tp)) return false;
+
+   if(type == ORDER_TYPE_BUY) ok = trade.Buy(lot, Sym, retryPrice, 0.0, 0.0, comment + " retry");
+   if(type == ORDER_TYPE_SELL) ok = trade.Sell(lot, Sym, retryPrice, 0.0, 0.0, comment + " retry");
+   if(!ok) return false;
+
+   if(!trade.PositionModify(Sym, sl, tp))
+   {
+      trade.PositionClose(Sym);
+      return false;
+   }
+   return true;
+}
+
+bool OpenTrade(ENUM_ORDER_TYPE type, double atrValue)
+{
+   if(!ExecutionTrendOk(type)) return false;
+   MqlTick tick;
+   if(!SymbolInfoTick(Sym, tick)) return false;
+   double price = NormalizePrice(type == ORDER_TYPE_BUY ? tick.ask : tick.bid);
+   double sl = 0.0;
+   double tp = 0.0;
+   if(!BuildStops(type, price, atrValue, sl, tp)) return false;
+
+   double lot = NormalizeVolume(ForcedLot());
+   if(lot <= 0.0) return false;
 
    trade.SetExpertMagicNumber((int)MagicNumber);
    trade.SetDeviationInPoints(SlippagePoints);
-   bool ok = false;
-   double lot = ForcedLot();
-   if(type == ORDER_TYPE_BUY) ok = trade.Buy(lot, Sym, 0.0, sl, tp, "V26 BUY");
-   if(type == ORDER_TYPE_SELL) ok = trade.Sell(lot, Sym, 0.0, sl, tp, "V26 SELL");
+   trade.SetTypeFillingBySymbol(Sym);
+
+   lastAttemptTime = TimeCurrent();
+   bool ok = PlaceOrder(type, lot, price, sl, tp, type == ORDER_TYPE_BUY ? "V26 BUY" : "V26 SELL");
    if(ok)
    {
       tradesToday++;
@@ -232,7 +369,10 @@ bool OpenTrade(ENUM_ORDER_TYPE type, double atrValue)
 int OnInit()
 {
    Sym = InpTradeSymbol == "" ? _Symbol : InpTradeSymbol;
+   if(!SymbolSelect(Sym, true)) return INIT_FAILED;
    trade.SetExpertMagicNumber((int)MagicNumber);
+   trade.SetDeviationInPoints(SlippagePoints);
+   trade.SetTypeFillingBySymbol(Sym);
 
    h1FastHandle = iMA(Sym, PERIOD_H1, FastLen, 0, MODE_EMA, PRICE_CLOSE);
    h1SlowHandle = iMA(Sym, PERIOD_H1, SlowLen, 0, MODE_EMA, PRICE_CLOSE);
@@ -258,6 +398,8 @@ int OnInit()
 
    if(h1FastHandle == INVALID_HANDLE || h1SlowHandle == INVALID_HANDLE || h1TrendHandle == INVALID_HANDLE || h1RsiHandle == INVALID_HANDLE || h1AtrHandle == INVALID_HANDLE) return INIT_FAILED;
    if(m15FastHandle == INVALID_HANDLE || m15SlowHandle == INVALID_HANDLE || m15TrendHandle == INVALID_HANDLE || m15RsiHandle == INVALID_HANDLE || m15AtrHandle == INVALID_HANDLE) return INIT_FAILED;
+   if(h2FastHandle == INVALID_HANDLE || h2SlowHandle == INVALID_HANDLE || h2TrendHandle == INVALID_HANDLE || h2RsiHandle == INVALID_HANDLE) return INIT_FAILED;
+   if(h4FastHandle == INVALID_HANDLE || h4SlowHandle == INVALID_HANDLE || h4TrendHandle == INVALID_HANDLE || h4RsiHandle == INVALID_HANDLE) return INIT_FAILED;
 
    ResetDailyCounterIfNeeded();
    return INIT_SUCCEEDED;
@@ -277,7 +419,8 @@ void OnTick()
    if(!IsSessionOk()) return;
    if(HasOpenPosition()) return;
    if(tradesToday >= MaxTradesPerDay) return;
-   if(lastEntryTime > 0 && (TimeCurrent() - lastEntryTime) < CooldownMinutes * 60) return;
+   if(lastAttemptTime > 0 && (TimeCurrent() - lastAttemptTime) < CooldownMinutes * 60) return;
+   if(!IsNewExecutionBar()) return;
 
    double sellAtr = 0.0;
    double buyAtr = 0.0;
