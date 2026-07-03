@@ -87,10 +87,10 @@ jobs:
       PUBLIC_FETCH_WORKERS: "16"
       PUBLIC_MAX_DOWNLOAD_SECONDS: "10800"
       PUBLIC_MAX_HISTORY_DAYS: "370"
-      PUBLIC_MIN_REQUIRED_BARS: "150000"
+      PUBLIC_MIN_REQUIRED_BARS: "250000"
       PUBLIC_MIN_REQUIRED_DAYS_WITH_TICKS: "220"
       PUBLIC_MIN_HOUR_SUCCESS_RATIO: "0.90"
-      PUBLIC_SESSION_HOURS: "7,8,9,10,11,12,13,14,15,16,17,18,19,20"
+      PUBLIC_SESSION_HOURS: "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23"
       PUBLIC_CACHE_DIR: ".cache/dukascopy"
 
       MT5_LOGIN: ${{ secrets.MT5_LOGIN }}
@@ -105,7 +105,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cache/dukascopy
-          key: dukascopy-xau-v27-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-v1
+          key: dukascopy-xau-v27-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-v2
           restore-keys: |
             dukascopy-xau-v27-${{ matrix.chunk }}-
             dukascopy-xau-v27-
