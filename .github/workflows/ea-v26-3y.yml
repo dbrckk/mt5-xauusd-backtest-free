@@ -85,21 +85,22 @@ jobs:
           $e = $e.Replace('input int MaxTradesPerDay = 8;', 'input int MaxTradesPerDay = 5;')
           $e = $e.Replace('return 0.02;', 'return 0.04;')
           $e = $e.Replace('if(!IsSessionOk()) return;', 'if(!IsSessionOk()) { if(HasOpenPosition()) trade.PositionClose(Sym); return; }')
-          $helper = @'
-bool OpenMandatoryDailyTrade()
-{
-   if(tradesToday > 0) return false;
-   MqlDateTime dt;
-   TimeToStruct(TimeCurrent(), dt);
-   if(dt.day_of_week == 0 || dt.day_of_week == 6) return false;
-   if(dt.hour != 15 || dt.min < 45) return false;
-   double atrValue = 0.0;
-   if(!CopyOne(m15AtrHandle, 1, atrValue)) return false;
-   if(atrValue <= 0.0) return false;
-   if(TrendState(PERIOD_H1, false)) return OpenTrade(ORDER_TYPE_SELL, atrValue);
-   return OpenTrade(ORDER_TYPE_BUY, atrValue);
-}
-'@
+          $helperLines = @(
+            'bool OpenMandatoryDailyTrade()',
+            '{',
+            '   if(tradesToday > 0) return false;',
+            '   MqlDateTime dt;',
+            '   TimeToStruct(TimeCurrent(), dt);',
+            '   if(dt.day_of_week == 0 || dt.day_of_week == 6) return false;',
+            '   if(dt.hour != 15 || dt.min < 45) return false;',
+            '   double atrValue = 0.0;',
+            '   if(!CopyOne(m15AtrHandle, 1, atrValue)) return false;',
+            '   if(atrValue <= 0.0) return false;',
+            '   if(TrendState(PERIOD_H1, false)) return OpenTrade(ORDER_TYPE_SELL, atrValue);',
+            '   return OpenTrade(ORDER_TYPE_BUY, atrValue);',
+            '}'
+          )
+          $helper = $helperLines -join "`n"
           $e = $e.Replace('void OnTick()', $helper + "`nvoid OnTick()")
           $e = $e.Replace('if(!IsNewExecutionBar()) return;', 'if(!IsNewExecutionBar()) return; if(OpenMandatoryDailyTrade()) return;')
           Set-Content $ea $e -Encoding UTF8
