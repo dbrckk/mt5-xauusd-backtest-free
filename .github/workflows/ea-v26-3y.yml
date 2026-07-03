@@ -124,11 +124,31 @@ jobs:
           python scripts/analyze-v27-results.py reports --deposit $env:BT_DEPOSIT |
             Tee-Object -FilePath reports/V27_ANALYSIS_CONSOLE.json
 
+      - name: Export compact V27 summary
+        if: always()
+        shell: pwsh
+        run: |
+          $summary = "NO_ANALYSIS"
+          if (Test-Path reports/V27_ANALYSIS.json) {
+            $analysis = Get-Content reports/V27_ANALYSIS.json -Raw | ConvertFrom-Json
+            $pf = if ($null -eq $analysis.overall.profit_factor) { "NA" } else { "{0:N2}" -f [double]$analysis.overall.profit_factor }
+            $wr = if ($null -eq $analysis.overall.win_rate) { "NA" } else { "{0:N1}" -f ([double]$analysis.overall.win_rate * 100.0) }
+            $net = "{0:N0}" -f [double]$analysis.overall.net_profit
+            $trades = [int]$analysis.overall.trades
+            $summary = "{0}-T{1}-PF{2}-WR{3}-NET{4}" -f $analysis.verdict,$trades,$pf,$wr,$net
+            $summary = $summary -replace '[^A-Za-z0-9_.-]', '_'
+            "V27_SUMMARY=$summary" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            "V27 compact summary: $summary" | Tee-Object -FilePath reports/V27_COMPACT_SUMMARY.txt
+          } else {
+            "V27_SUMMARY=$summary" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            "V27 compact summary: $summary" | Tee-Object -FilePath reports/V27_COMPACT_SUMMARY.txt
+          }
+
       - name: Upload artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: EA-V27-CLEAN-${{ matrix.period }}-${{ matrix.chunk }}-${{ github.run_number }}-${{ github.sha }}
+          name: EA-V27-CLEAN-${{ matrix.period }}-${{ matrix.chunk }}-${{ env.V27_SUMMARY }}-${{ github.run_number }}-${{ github.sha }}
           path: reports/**
           if-no-files-found: error
           retention-days: 14
