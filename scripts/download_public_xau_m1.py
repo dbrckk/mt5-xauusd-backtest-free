@@ -1,5 +1,6 @@
 import csv
 import datetime as dt
+import hashlib
 import lzma
 import os
 import struct
@@ -14,51 +15,57 @@ from pathlib import Path
 BASE_URL = "https://datafeed.dukascopy.com/datafeed"
 INSTRUMENT = "XAUUSD"
 SCALE = 1000.0
-MAX_PUBLIC_SPREAD_POINTS = 80
+MAX_PUBLIC_SPREAD_POINTS = 120
 
 
-def _int_env(name: str, default: int, min_value: int | None = None, max_value: int | None = None) -> int:
+def int_env(name: str, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
     try:
         value = int(os.environ.get(name, str(default)))
     except Exception:
         value = default
-    if min_value is not None:
-        value = max(min_value, value)
-    if max_value is not None:
-        value = min(max_value, value)
+    if minimum is not None:
+        value = max(minimum, value)
+    if maximum is not None:
+        value = min(maximum, value)
     return value
 
 
-def _hours_env() -> list[int]:
-    raw = os.environ.get("PUBLIC_SESSION_HOURS", "8,9,10,11,13,14,15,16")
+def float_env(name: str, default: float, minimum: float | None = None, maximum: float | None = None) -> float:
+    try:
+        value = float(os.environ.get(name, str(default)))
+    except Exception:
+        value = default
+    if minimum is not None:
+        value = max(minimum, value)
+    if maximum is not None:
+        value = min(maximum, value)
+    return value
+
+
+def hours_env() -> list[int]:
+    raw = os.environ.get("PUBLIC_SESSION_HOURS", "7,8,9,10,11,12,13,14,15,16,17,18,19,20")
     hours: list[int] = []
     for part in raw.split(","):
-        part = part.strip()
-        if not part:
-            continue
         try:
-            hour = int(part)
-            if 0 <= hour <= 23 and hour not in hours:
-                hours.append(hour)
+            hour = int(part.strip())
         except Exception:
-            pass
-    return hours or [8, 9, 10, 11, 13, 14, 15, 16]
+            continue
+        if 0 <= hour <= 23 and hour not in hours:
+            hours.append(hour)
+    return hours or list(range(7, 21))
 
 
-# Public GitHub Actions validation uses Dukascopy's free endpoint.
-# The endpoint often returns 502/timeouts on individual hourly .bi5 files.
-# This downloader must not let one bad hour kill a 1-year M15 chunk.
-SESSION_HOURS = _hours_env()
-FETCH_TIMEOUT_SECONDS = _int_env("PUBLIC_FETCH_TIMEOUT_SECONDS", 30, 5, 180)
-FETCH_RETRIES = _int_env("PUBLIC_FETCH_RETRIES", 3, 1, 12)
-FETCH_WORKERS = _int_env("PUBLIC_FETCH_WORKERS", 8, 1, 24)
-MAX_DAYS = _int_env("PUBLIC_MAX_HISTORY_DAYS", 370, 1, 400)
-MIN_BARS_TO_STOP = _int_env("PUBLIC_MIN_BARS_TO_STOP", 999999999, 1, None)
-MAX_DOWNLOAD_SECONDS = _int_env("PUBLIC_MAX_DOWNLOAD_SECONDS", 10800, 60, None)
-MIN_REQUIRED_BARS = _int_env("PUBLIC_MIN_REQUIRED_BARS", 12000, 1, None)
-MIN_REQUIRED_DAYS_WITH_TICKS = _int_env("PUBLIC_MIN_REQUIRED_DAYS_WITH_TICKS", 20, 1, None)
+SESSION_HOURS = hours_env()
+FETCH_TIMEOUT_SECONDS = int_env("PUBLIC_FETCH_TIMEOUT_SECONDS", 25, 5, 180)
+FETCH_RETRIES = int_env("PUBLIC_FETCH_RETRIES", 4, 1, 12)
+FETCH_RETRY_ROUNDS = int_env("PUBLIC_FETCH_RETRY_ROUNDS", 3, 1, 8)
+FETCH_WORKERS = int_env("PUBLIC_FETCH_WORKERS", 24, 1, 32)
+MAX_DAYS = int_env("PUBLIC_MAX_HISTORY_DAYS", 370, 1, 400)
+MAX_DOWNLOAD_SECONDS = int_env("PUBLIC_MAX_DOWNLOAD_SECONDS", 10800, 60)
+MIN_REQUIRED_BARS = int_env("PUBLIC_MIN_REQUIRED_BARS", 150000, 1)
+MIN_REQUIRED_DAYS_WITH_TICKS = int_env("PUBLIC_MIN_REQUIRED_DAYS_WITH_TICKS", 220, 1)
+MIN_HOUR_SUCCESS_RATIO = float_env("PUBLIC_MIN_HOUR_SUCCESS_RATIO", 0.90, 0.0, 1.0)
 CACHE_DIR = os.environ.get("PUBLIC_CACHE_DIR", "").strip()
-
 
 failed_downloads: list[str] = []
 missing_downloads: list[str] = []
@@ -70,14 +77,17 @@ def parse_ymd(value: str) -> dt.date:
 
 
 def daterange(start: dt.date, end_inclusive: dt.date):
-    d = start
-    while d <= end_inclusive:
-        yield d
-        d += dt.timedelta(days=1)
+    current = start
+    while current <= end_inclusive:
+        yield current
+        current += dt.timedelta(days=1)
+
+
+def market_days(start: dt.date, end: dt.date) -> list[dt.date]:
+    return [day for day in daterange(start, end) if day.weekday() < 5]
 
 
 def hour_url(day: dt.date, hour: int) -> str:
-    # Dukascopy months are zero-based in the datafeed path.
     return f"{BASE_URL}/{INSTRUMENT}/{day.year}/{day.month - 1:02d}/{day.day:02d}/{hour:02d}h_ticks.bi5"
 
 
@@ -90,12 +100,11 @@ def cache_path_for(day: dt.date, hour: int) -> Path | None:
 def fetch_hour(day: dt.date, hour: int) -> tuple[dt.date, int, bytes | None, str, str]:
     url = hour_url(day, hour)
     cache_path = cache_path_for(day, hour)
-
     if cache_path is not None and cache_path.exists() and cache_path.stat().st_size > 0:
         try:
             return day, hour, cache_path.read_bytes(), "cached", url
-        except Exception as exc:
-            print(f"cache read failed for {cache_path}: {exc}")
+        except Exception:
+            pass
 
     last_error = ""
     for attempt in range(1, FETCH_RETRIES + 1):
@@ -103,36 +112,31 @@ def fetch_hour(day: dt.date, hour: int) -> tuple[dt.date, int, bytes | None, str
             req = urllib.request.Request(
                 url,
                 headers={
-                    "User-Agent": "Mozilla/5.0 GitHubActions-XAU-Public-Backtest/2.0",
+                    "User-Agent": "Mozilla/5.0 GitHubActions-XAU-Public-Backtest/3.0",
                     "Accept": "*/*",
                     "Connection": "close",
-                    "Cache-Control": "no-cache",
                 },
             )
-            with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT_SECONDS) as resp:
-                data = resp.read()
+            with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT_SECONDS) as response:
+                data = response.read()
             if data:
                 if cache_path is not None:
-                    try:
-                        cache_path.parent.mkdir(parents=True, exist_ok=True)
-                        tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
-                        tmp_path.write_bytes(data)
-                        tmp_path.replace(cache_path)
-                    except Exception as exc:
-                        print(f"cache write failed for {cache_path}: {exc}")
+                    cache_path.parent.mkdir(parents=True, exist_ok=True)
+                    tmp = cache_path.with_suffix(cache_path.suffix + ".tmp")
+                    tmp.write_bytes(data)
+                    tmp.replace(cache_path)
                 return day, hour, data, "downloaded", url
             last_error = "empty response"
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
                 return day, hour, None, "missing_404", url
-            last_error = f"HTTP error {exc.code}"
+            last_error = f"HTTP {exc.code}"
         except Exception as exc:
             last_error = str(exc)
 
-        print(f"download attempt {attempt}/{FETCH_RETRIES} failed for {url}: {last_error}")
-        time.sleep(min(8.0, 1.0 + attempt * 1.5))
+        time.sleep(min(5.0, 0.5 + attempt))
 
-    return day, hour, None, f"failed: {last_error}", url
+    return day, hour, None, f"failed:{last_error}", url
 
 
 def decompress_bi5(data: bytes) -> bytes | None:
@@ -141,12 +145,11 @@ def decompress_bi5(data: bytes) -> bytes | None:
     except Exception:
         try:
             return lzma.LZMADecompressor(format=lzma.FORMAT_AUTO).decompress(data)
-        except Exception as exc:
-            print(f"decompress failed: {exc}")
+        except Exception:
             return None
 
 
-def update_bar(bars: dict[str, list], minute: dt.datetime, price: float, spread_points: int):
+def update_bar(bars: dict[str, list], minute: dt.datetime, price: float, spread_points: int) -> None:
     key = minute.strftime("%Y.%m.%d %H:%M")
     spread_points = max(1, min(MAX_PUBLIC_SPREAD_POINTS, int(spread_points)))
     if key not in bars:
@@ -156,26 +159,24 @@ def update_bar(bars: dict[str, list], minute: dt.datetime, price: float, spread_
     bar[2] = min(bar[2], price)
     bar[3] = price
     bar[4] += 1
-    if spread_points > 0:
-        bar[5] = min(bar[5], spread_points)
+    bar[5] = min(bar[5], spread_points)
 
 
 def process_hour(day: dt.date, hour: int, raw: bytes, bars: dict[str, list]) -> int:
-    decompressed = decompress_bi5(raw)
-    if not decompressed or len(decompressed) < 20:
+    data = decompress_bi5(raw)
+    if not data or len(data) < 20:
         return 0
 
-    tick_count = 0
     base_time = dt.datetime(day.year, day.month, day.day, hour, tzinfo=dt.timezone.utc)
-    for offset in range(0, len(decompressed) - 19, 20):
-        chunk = decompressed[offset:offset + 20]
+    tick_count = 0
+    for offset in range(0, len(data) - 19, 20):
         try:
-            ms, ask_i, bid_i, ask_vol, bid_vol = struct.unpack(">IIIff", chunk)
+            ms, ask_i, bid_i, _ask_vol, _bid_vol = struct.unpack(">IIIff", data[offset:offset + 20])
         except Exception:
             continue
         ask = ask_i / SCALE
         bid = bid_i / SCALE
-        if ask <= 0 or bid <= 0:
+        if ask <= 0 or bid <= 0 or ask < bid:
             continue
         price = (ask + bid) / 2.0
         spread_points = max(1, int(round((ask - bid) * SCALE)))
@@ -186,83 +187,96 @@ def process_hour(day: dt.date, hour: int, raw: bytes, bars: dict[str, list]) -> 
     return tick_count
 
 
-def download_day(day: dt.date, bars: dict[str, list]) -> tuple[int, int]:
-    day_ticks = 0
-    hours_ok = 0
-    max_workers = min(FETCH_WORKERS, len(SESSION_HOURS))
+def fetch_and_process_slots(
+    slots: list[tuple[dt.date, int]],
+    deadline: float,
+    bars: dict[str, list],
+) -> tuple[int, int, int, int, set[dt.date]]:
+    pending = list(slots)
+    total_ticks = 0
+    successful_hours = 0
+    failed_hours = 0
+    missing_404 = 0
+    days_with_ticks: set[dt.date] = set()
 
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = [pool.submit(fetch_hour, day, hour) for hour in SESSION_HOURS]
-        for future in as_completed(futures):
-            d, hour, raw, status, url = future.result()
-            status_counts[status.split(":", 1)[0]] += 1
-            if status == "missing_404":
-                missing_downloads.append(url)
-                continue
-            if raw is None:
-                failed_downloads.append(f"{url} | {status}")
-                print(f"download exhausted for {url}: {status}")
-                continue
-            ticks = process_hour(d, hour, raw, bars)
-            if ticks > 0:
-                day_ticks += ticks
-                hours_ok += 1
+    for round_no in range(1, FETCH_RETRY_ROUNDS + 1):
+        if not pending or time.time() >= deadline:
+            break
 
-    print(f"{day.isoformat()} session_ticks={day_ticks} session_hours_ok={hours_ok} bars_so_far={len(bars)}")
-    return day_ticks, hours_ok
+        retry: list[tuple[dt.date, int]] = []
+        print(f"FETCH_ROUND={round_no} pending={len(pending)} workers={FETCH_WORKERS}")
 
+        with ThreadPoolExecutor(max_workers=FETCH_WORKERS) as pool:
+            future_map = {pool.submit(fetch_hour, day, hour): (day, hour) for day, hour in pending}
+            for future in as_completed(future_map):
+                day, hour = future_map[future]
+                try:
+                    d, h, raw, status, url = future.result()
+                except Exception as exc:
+                    d, h = day, hour
+                    raw, status, url = None, f"failed:{exc}", hour_url(day, hour)
 
-def sort_bars(bars: dict[str, list]) -> OrderedDict:
-    return OrderedDict((key, bars[key]) for key in sorted(bars.keys()))
+                status_key = status.split(":", 1)[0]
+                status_counts[status_key] += 1
 
+                if raw is not None:
+                    ticks = process_hour(d, h, raw, bars)
+                    if ticks > 0:
+                        total_ticks += ticks
+                        successful_hours += 1
+                        days_with_ticks.add(d)
+                    else:
+                        retry.append((d, h))
+                    continue
 
-def fill_missing_minutes(bars: OrderedDict):
-    if not bars:
-        return bars
-    keys = list(bars.keys())
-    start = dt.datetime.strptime(keys[0], "%Y.%m.%d %H:%M")
-    end = dt.datetime.strptime(keys[-1], "%Y.%m.%d %H:%M")
-    filled = OrderedDict()
-    last_close = None
-    current = start
-    while current <= end:
-        key = current.strftime("%Y.%m.%d %H:%M")
-        if key in bars:
-            filled[key] = bars[key]
-            last_close = bars[key][3]
-        elif last_close is not None:
-            filled[key] = [last_close, last_close, last_close, last_close, 1, min(30, MAX_PUBLIC_SPREAD_POINTS), 0]
-        current += dt.timedelta(minutes=1)
-    return filled
+                if status == "missing_404":
+                    missing_404 += 1
+                    missing_downloads.append(url)
+                    continue
 
+                retry.append((d, h))
 
-def write_diagnostics(out_csv: str, bars_count: int, total_ticks: int, days_with_ticks: int, hours_ok_total: int):
-    out_dir = Path(out_csv).resolve().parent
-    out_dir.mkdir(parents=True, exist_ok=True)
+        pending = retry
 
-    if failed_downloads:
-        (out_dir / "failed_downloads.txt").write_text("\n".join(failed_downloads), encoding="utf-8")
-    if missing_downloads:
-        (out_dir / "missing_404_downloads.txt").write_text("\n".join(missing_downloads), encoding="utf-8")
+    for day, hour in pending:
+        failed_hours += 1
+        url = hour_url(day, hour)
+        failed_downloads.append(f"{url} | retry_rounds_exhausted")
 
-    diag = [
-        f"bars={bars_count}",
-        f"ticks={total_ticks}",
-        f"days_with_ticks={days_with_ticks}",
-        f"hours_ok_total={hours_ok_total}",
-        f"failed_count={len(failed_downloads)}",
-        f"missing_404_count={len(missing_downloads)}",
-        f"status_counts={dict(status_counts)}",
-        f"fetch_timeout_seconds={FETCH_TIMEOUT_SECONDS}",
-        f"fetch_retries={FETCH_RETRIES}",
-        f"fetch_workers={FETCH_WORKERS}",
-        f"session_hours={SESSION_HOURS}",
-        f"cache_dir={CACHE_DIR or 'disabled'}",
-    ]
-    (out_dir / "download_diagnostics.txt").write_text("\n".join(diag), encoding="utf-8")
+    return total_ticks, successful_hours, failed_hours, missing_404, days_with_ticks
 
 
-def main():
+def write_csv(out_csv: str, bars: dict[str, list]) -> tuple[int, str]:
+    ordered = OrderedDict((key, bars[key]) for key in sorted(bars))
+    hasher = hashlib.sha256()
+    count = 0
+
+    with open(out_csv, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        header = ["time", "open", "high", "low", "close", "tick_volume", "spread", "real_volume"]
+        writer.writerow(header)
+        hasher.update((",".join(header) + "\n").encode())
+
+        for timestamp, row in ordered.items():
+            o, h, l, c, tick_volume, spread, real_volume = row
+            values = [
+                timestamp,
+                f"{o:.3f}",
+                f"{h:.3f}",
+                f"{l:.3f}",
+                f"{c:.3f}",
+                str(int(tick_volume)),
+                str(int(spread)),
+                str(int(real_volume)),
+            ]
+            writer.writerow(values)
+            hasher.update((",".join(values) + "\n").encode())
+            count += 1
+
+    return count, hasher.hexdigest()
+
+
+def main() -> int:
     if len(sys.argv) < 4:
         print("usage: download_public_xau_m1.py FROM_DATE TO_DATE OUT_CSV")
         return 2
@@ -273,64 +287,80 @@ def main():
     out_csv = sys.argv[3]
     os.makedirs(os.path.dirname(os.path.abspath(out_csv)), exist_ok=True)
 
+    days = market_days(start, end)
+    slots = [(day, hour) for day in days for hour in SESSION_HOURS]
+    deadline = time.time() + MAX_DOWNLOAD_SECONDS
     bars: dict[str, list] = {}
-    total_ticks = 0
-    hours_ok_total = 0
-    started = time.time()
-    days_with_ticks = 0
+    total_ticks, successful_hours, failed_hours, missing_404, days_with_ticks = fetch_and_process_slots(
+        slots,
+        deadline,
+        bars,
+    )
 
-    for day in daterange(start, end):
-        day_ticks, hours_ok = download_day(day, bars)
-        total_ticks += day_ticks
-        hours_ok_total += hours_ok
-        if day_ticks > 0:
-            days_with_ticks += 1
+    bars_count, dataset_sha256 = write_csv(out_csv, bars)
+    denominator = successful_hours + failed_hours
+    hour_success_ratio = successful_hours / denominator if denominator else 0.0
 
-        if len(bars) >= MIN_BARS_TO_STOP:
-            print(f"PUBLIC_HISTORY_FAST_STOP_BARS={len(bars)}")
-            break
+    out_dir = Path(out_csv).resolve().parent
+    if failed_downloads:
+        (out_dir / "failed_downloads.txt").write_text("\n".join(failed_downloads), encoding="utf-8")
+    if missing_downloads:
+        (out_dir / "missing_404_downloads.txt").write_text("\n".join(missing_downloads), encoding="utf-8")
 
-        elapsed = time.time() - started
-        if elapsed > MAX_DOWNLOAD_SECONDS and len(bars) >= MIN_REQUIRED_BARS:
-            print(f"PUBLIC_HISTORY_TIME_BUDGET_STOP_SECONDS={MAX_DOWNLOAD_SECONDS}")
-            break
-        if elapsed > MAX_DOWNLOAD_SECONDS and len(bars) < MIN_REQUIRED_BARS:
-            print(f"PUBLIC_HISTORY_TIME_BUDGET_EXHAUSTED_SECONDS={MAX_DOWNLOAD_SECONDS}")
-            break
+    diagnostics = {
+        "bars": bars_count,
+        "ticks": total_ticks,
+        "days_with_ticks": len(days_with_ticks),
+        "market_days_requested": len(days),
+        "successful_hours": successful_hours,
+        "failed_hours": failed_hours,
+        "missing_404_hours": missing_404,
+        "hour_success_ratio": round(hour_success_ratio, 6),
+        "min_required_hour_success_ratio": MIN_HOUR_SUCCESS_RATIO,
+        "failed_count": len(failed_downloads),
+        "status_counts": dict(status_counts),
+        "fetch_timeout_seconds": FETCH_TIMEOUT_SECONDS,
+        "fetch_retries": FETCH_RETRIES,
+        "fetch_retry_rounds": FETCH_RETRY_ROUNDS,
+        "fetch_workers": FETCH_WORKERS,
+        "session_hours": SESSION_HOURS,
+        "cache_dir": CACHE_DIR or "disabled",
+        "synthetic_fill_bars": 0,
+        "dataset_sha256": dataset_sha256,
+        "range_requested": f"{start.isoformat()}..{requested_end.isoformat()}",
+        "range_downloaded": f"{start.isoformat()}..{end.isoformat()}",
+    }
+    (out_dir / "download_diagnostics.json").write_text(
+        __import__("json").dumps(diagnostics, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (out_dir / "download_diagnostics.txt").write_text(
+        "\n".join(f"{key}={value}" for key, value in diagnostics.items()),
+        encoding="utf-8",
+    )
 
-    ordered = sort_bars(bars)
-    filled = fill_missing_minutes(ordered)
+    print(f"PUBLIC_HISTORY_BARS={bars_count}")
+    print(f"PUBLIC_HISTORY_DAYS_WITH_TICKS={len(days_with_ticks)}")
+    print(f"PUBLIC_HISTORY_SUCCESSFUL_HOURS={successful_hours}")
+    print(f"PUBLIC_HISTORY_FAILED_HOURS={failed_hours}")
+    print(f"PUBLIC_HISTORY_MISSING_404={missing_404}")
+    print(f"PUBLIC_HISTORY_HOUR_SUCCESS_RATIO={hour_success_ratio:.6f}")
+    print("PUBLIC_HISTORY_SYNTHETIC_FILL_BARS=0")
+    print(f"PUBLIC_HISTORY_DATASET_SHA256={dataset_sha256}")
 
-    with open(out_csv, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["time", "open", "high", "low", "close", "tick_volume", "spread", "real_volume"])
-        for t, row in filled.items():
-            o, h, l, c, tv, spread, rv = row
-            writer.writerow([t, f"{o:.3f}", f"{h:.3f}", f"{l:.3f}", f"{c:.3f}", int(tv), int(spread), int(rv)])
+    failures = []
+    if bars_count < MIN_REQUIRED_BARS:
+        failures.append(f"bars {bars_count} < {MIN_REQUIRED_BARS}")
+    if len(days_with_ticks) < MIN_REQUIRED_DAYS_WITH_TICKS:
+        failures.append(f"days_with_ticks {len(days_with_ticks)} < {MIN_REQUIRED_DAYS_WITH_TICKS}")
+    if hour_success_ratio < MIN_HOUR_SUCCESS_RATIO:
+        failures.append(f"hour_success_ratio {hour_success_ratio:.4f} < {MIN_HOUR_SUCCESS_RATIO:.4f}")
 
-    write_diagnostics(out_csv, len(filled), total_ticks, days_with_ticks, hours_ok_total)
-
-    print(f"PUBLIC_HISTORY_CSV={out_csv}")
-    print(f"PUBLIC_HISTORY_TICKS={total_ticks}")
-    print(f"PUBLIC_HISTORY_BARS={len(filled)}")
-    print(f"PUBLIC_HISTORY_DAYS_WITH_TICKS={days_with_ticks}")
-    print(f"PUBLIC_HISTORY_HOURS_OK={hours_ok_total}")
-    print(f"PUBLIC_HISTORY_FAILED_DOWNLOADS={len(failed_downloads)}")
-    print(f"PUBLIC_HISTORY_MISSING_404={len(missing_downloads)}")
-    print(f"PUBLIC_HISTORY_RANGE_REQUESTED={start.isoformat()}..{requested_end.isoformat()}")
-    print(f"PUBLIC_HISTORY_RANGE_DOWNLOADED={start.isoformat()}..{end.isoformat()}")
-    print(f"PUBLIC_HISTORY_SESSION_HOURS={','.join(map(str, SESSION_HOURS))}")
-    print(f"PUBLIC_HISTORY_MAX_SPREAD_POINTS={MAX_PUBLIC_SPREAD_POINTS}")
-    print(f"PUBLIC_FETCH_TIMEOUT_SECONDS={FETCH_TIMEOUT_SECONDS}")
-    print(f"PUBLIC_FETCH_RETRIES={FETCH_RETRIES}")
-    print(f"PUBLIC_FETCH_WORKERS={FETCH_WORKERS}")
-    print(f"PUBLIC_MAX_DOWNLOAD_SECONDS={MAX_DOWNLOAD_SECONDS}")
-    print("PUBLIC_HISTORY_FAST_LONDON_NY_ONLY=true")
-
-    if len(filled) < MIN_REQUIRED_BARS or days_with_ticks < MIN_REQUIRED_DAYS_WITH_TICKS:
-        print("NOT_ENOUGH_PUBLIC_HISTORY")
-        print("PUBLIC_HISTORY_SOURCE_UNAVAILABLE=true")
+    if failures:
+        print("PUBLIC_HISTORY_QUALITY_FAIL=" + " | ".join(failures))
         return 20
+
+    print("PUBLIC_HISTORY_QUALITY_PASS=true")
     return 0
 
 
