@@ -30,6 +30,16 @@ on:
       - "scripts/run-ea-v27-public-backtest.ps1"
       - "scripts/download_public_xau_m1.py"
       - "scripts/analyze-v27-results.py"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/ea-v26-3y.yml"
+      - "MQL5/Experts/XAUUSD_V27_Clean_MultiSetup.mq5"
+      - "MQL5/Experts/ImportCustomRatesEA.mq5"
+      - "scripts/run-ea-v27-public-backtest.ps1"
+      - "scripts/download_public_xau_m1.py"
+      - "scripts/analyze-v27-results.py"
 
 permissions:
   contents: read
