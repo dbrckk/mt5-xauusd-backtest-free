@@ -1,6 +1,6 @@
 #property strict
-#property version   "1.00"
-#property description "Imports public M1 OHLC data into a custom MT5 symbol, then closes terminal."
+#property version   "1.10"
+#property description "Imports strict public M1 OHLC data into a leverage-aware custom MT5 symbol."
 
 input string InpCsvFile = "xau_public_m1.csv";
 input string InpCustomSymbol = "XAU_PUBLIC";
@@ -10,11 +10,12 @@ input double InpPoint = 0.001;
 
 bool WriteResult(const string text)
 {
-   int h = FileOpen("import_custom_rates_result.txt", FILE_WRITE | FILE_TXT | FILE_ANSI);
-   if(h == INVALID_HANDLE)
+   int handle = FileOpen("import_custom_rates_result.txt", FILE_WRITE | FILE_TXT | FILE_ANSI);
+   if(handle == INVALID_HANDLE)
       return false;
-   FileWrite(h, text);
-   FileClose(h);
+
+   FileWrite(handle, text);
+   FileClose(handle);
    return true;
 }
 
@@ -23,20 +24,24 @@ bool EnsureSymbol()
    ResetLastError();
    if(!CustomSymbolCreate(InpCustomSymbol, InpCustomPath, "XAUUSD"))
    {
-      int err = GetLastError();
-      if(err != 5304 && err != 5300)
-         Print("CustomSymbolCreate failed: ", err);
+      int errorCode = GetLastError();
+      if(errorCode != 5304 && errorCode != 5300)
+         Print("CustomSymbolCreate failed: ", errorCode);
    }
 
-   CustomSymbolSetString(InpCustomSymbol, SYMBOL_DESCRIPTION, "Public XAUUSD M1 history");
+   CustomSymbolSetString(InpCustomSymbol, SYMBOL_DESCRIPTION, "Strict public XAUUSD M1 history");
    CustomSymbolSetString(InpCustomSymbol, SYMBOL_CURRENCY_BASE, "XAU");
    CustomSymbolSetString(InpCustomSymbol, SYMBOL_CURRENCY_PROFIT, "USD");
    CustomSymbolSetString(InpCustomSymbol, SYMBOL_CURRENCY_MARGIN, "USD");
+
    CustomSymbolSetInteger(InpCustomSymbol, SYMBOL_DIGITS, InpDigits);
    CustomSymbolSetDouble(InpCustomSymbol, SYMBOL_POINT, InpPoint);
    CustomSymbolSetInteger(InpCustomSymbol, SYMBOL_SPREAD_FLOAT, true);
    CustomSymbolSetInteger(InpCustomSymbol, SYMBOL_TRADE_MODE, SYMBOL_TRADE_MODE_FULL);
-   CustomSymbolSetInteger(InpCustomSymbol, SYMBOL_TRADE_CALC_MODE, SYMBOL_CALC_MODE_CFD);
+
+   // Critical V27 fix: CFDLEVERAGE applies the tester account leverage.
+   // The previous CFD mode required near-full notional margin and broke Y3.
+   CustomSymbolSetInteger(InpCustomSymbol, SYMBOL_TRADE_CALC_MODE, SYMBOL_CALC_MODE_CFDLEVERAGE);
    CustomSymbolSetDouble(InpCustomSymbol, SYMBOL_TRADE_CONTRACT_SIZE, 100.0);
    CustomSymbolSetDouble(InpCustomSymbol, SYMBOL_VOLUME_MIN, 0.01);
    CustomSymbolSetDouble(InpCustomSymbol, SYMBOL_VOLUME_MAX, 100.0);
@@ -48,6 +53,7 @@ bool EnsureSymbol()
       Print("SymbolSelect failed: ", GetLastError());
       return false;
    }
+
    return true;
 }
 
@@ -62,87 +68,121 @@ int OnInit()
       return INIT_FAILED;
    }
 
-   int h = FileOpen(InpCsvFile, FILE_READ | FILE_CSV | FILE_ANSI, ',');
-   if(h == INVALID_HANDLE)
+   int handle = FileOpen(InpCsvFile, FILE_READ | FILE_CSV | FILE_ANSI, ',');
+   if(handle == INVALID_HANDLE)
    {
-      int err = GetLastError();
-      Print("FileOpen failed: ", err, " file=", InpCsvFile);
-      WriteResult("IMPORT_FAILED file_open_error " + IntegerToString(err));
+      int errorCode = GetLastError();
+      Print("FileOpen failed: ", errorCode, " file=", InpCsvFile);
+      WriteResult("IMPORT_FAILED file_open_error " + IntegerToString(errorCode));
       TerminalClose(3);
       return INIT_FAILED;
    }
 
-   // Header
-   if(!FileIsEnding(h))
+   if(!FileIsEnding(handle))
    {
-      for(int i = 0; i < 8 && !FileIsLineEnding(h); i++)
-         FileReadString(h);
+      for(int i = 0; i < 8 && !FileIsLineEnding(handle); i++)
+         FileReadString(handle);
    }
 
    MqlRates rates[];
    ArrayResize(rates, 0, 20000);
    int count = 0;
+   datetime previousTime = 0;
+   int nonIncreasingRows = 0;
 
-   while(!FileIsEnding(h))
+   while(!FileIsEnding(handle))
    {
-      string t = FileReadString(h);
-      if(t == NULL || t == "")
+      string timestamp = FileReadString(handle);
+      if(timestamp == NULL || timestamp == "")
       {
-         if(!FileIsEnding(h))
+         if(!FileIsEnding(handle))
             continue;
          break;
       }
 
-      double o = FileReadNumber(h);
-      double hi = FileReadNumber(h);
-      double lo = FileReadNumber(h);
-      double c = FileReadNumber(h);
-      long tv = (long)FileReadNumber(h);
-      int spread = (int)FileReadNumber(h);
-      long rv = (long)FileReadNumber(h);
+      double openPrice = FileReadNumber(handle);
+      double highPrice = FileReadNumber(handle);
+      double lowPrice = FileReadNumber(handle);
+      double closePrice = FileReadNumber(handle);
+      long tickVolume = (long)FileReadNumber(handle);
+      int spread = (int)FileReadNumber(handle);
+      long realVolume = (long)FileReadNumber(handle);
 
-      datetime tm = StringToTime(t);
-      if(tm <= 0 || o <= 0 || hi <= 0 || lo <= 0 || c <= 0)
+      datetime timeValue = StringToTime(timestamp);
+      if(timeValue <= 0 || openPrice <= 0 || highPrice <= 0 || lowPrice <= 0 || closePrice <= 0)
+         continue;
+
+      if(previousTime > 0 && timeValue <= previousTime)
+      {
+         nonIncreasingRows++;
+         continue;
+      }
+
+      if(highPrice < MathMax(openPrice, closePrice) || lowPrice > MathMin(openPrice, closePrice))
          continue;
 
       ArrayResize(rates, count + 1, 20000);
-      rates[count].time = tm;
-      rates[count].open = o;
-      rates[count].high = hi;
-      rates[count].low = lo;
-      rates[count].close = c;
-      rates[count].tick_volume = tv;
+      rates[count].time = timeValue;
+      rates[count].open = openPrice;
+      rates[count].high = highPrice;
+      rates[count].low = lowPrice;
+      rates[count].close = closePrice;
+      rates[count].tick_volume = tickVolume;
       rates[count].spread = spread;
-      rates[count].real_volume = rv;
+      rates[count].real_volume = realVolume;
+
+      previousTime = timeValue;
       count++;
    }
-   FileClose(h);
 
-   if(count < 100)
+   FileClose(handle);
+
+   if(count < 1000)
    {
-      Print("Not enough bars imported: ", count);
-      WriteResult("IMPORT_FAILED not_enough_bars " + IntegerToString(count));
+      Print("Not enough real bars imported: ", count);
+      WriteResult("IMPORT_FAILED not_enough_real_bars " + IntegerToString(count));
       TerminalClose(4);
       return INIT_FAILED;
    }
 
    ArraySetAsSeries(rates, false);
-   datetime from_time = rates[0].time;
-   datetime to_time = rates[count - 1].time;
+   datetime fromTime = rates[0].time;
+   datetime toTime = rates[count - 1].time;
 
    ResetLastError();
-   int replaced = CustomRatesReplace(InpCustomSymbol, from_time, to_time, rates);
-   int err1 = GetLastError();
+   int replaced = CustomRatesReplace(InpCustomSymbol, fromTime, toTime, rates);
+   int replaceError = GetLastError();
+
    ResetLastError();
    int updated = CustomRatesUpdate(InpCustomSymbol, rates);
-   int err2 = GetLastError();
+   int updateError = GetLastError();
 
-   Print("IMPORT_CUSTOM_RATES_DONE count=", count, " replaced=", replaced, " err1=", err1, " updated=", updated, " err2=", err2);
-   WriteResult("IMPORT_OK symbol=" + InpCustomSymbol + " bars=" + IntegerToString(count) + " from=" + TimeToString(from_time) + " to=" + TimeToString(to_time));
+   long calcMode = SymbolInfoInteger(InpCustomSymbol, SYMBOL_TRADE_CALC_MODE);
+   Print(
+      "IMPORT_CUSTOM_RATES_DONE count=", count,
+      " replaced=", replaced,
+      " replaceError=", replaceError,
+      " updated=", updated,
+      " updateError=", updateError,
+      " calcMode=", calcMode,
+      " skippedNonIncreasing=", nonIncreasingRows
+   );
+
+   string result =
+      "IMPORT_OK symbol=" + InpCustomSymbol +
+      " bars=" + IntegerToString(count) +
+      " from=" + TimeToString(fromTime) +
+      " to=" + TimeToString(toTime) +
+      " calc_mode=" + IntegerToString((int)calcMode) +
+      " skipped_non_increasing=" + IntegerToString(nonIncreasingRows);
+
+   WriteResult(result);
 
    ChartSetSymbolPeriod(0, InpCustomSymbol, PERIOD_M1);
    TerminalClose(0);
    return INIT_SUCCEEDED;
 }
 
-void OnTick() {}
+void OnTick()
+{
+}
