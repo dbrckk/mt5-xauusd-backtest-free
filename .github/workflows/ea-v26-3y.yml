@@ -1,4 +1,4 @@
-name: EA V26 3Y MTF BACKTEST
+name: EA V27 CLEAN MULTI-SETUP 3Y BACKTEST
 
 on:
   workflow_dispatch:
@@ -19,12 +19,28 @@ on:
         required: true
         default: "350"
         type: string
+  push:
+    branches:
+      - main
+      - v27-clean-multisetup
+    paths:
+      - ".github/workflows/ea-v26-3y.yml"
+      - "MQL5/Experts/XAUUSD_V27_Clean_MultiSetup.mq5"
+      - "MQL5/Experts/ImportCustomRatesEA.mq5"
+      - "scripts/run-ea-v27-public-backtest.ps1"
+      - "scripts/download_public_xau_m1.py"
+      - "scripts/analyze-v27-results.py"
 
 permissions:
   contents: read
 
+concurrency:
+  group: v27-clean-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: false
+
 jobs:
   validate:
+    name: validate (${{ matrix.chunk }}, M15, ${{ matrix.from_date }}, ${{ matrix.to_date }})
     runs-on: windows-latest
     timeout-minutes: 420
     strategy:
@@ -43,95 +59,65 @@ jobs:
             period: M15
             from_date: "2025.06.21"
             to_date: "2026.06.21"
+
     env:
       BT_SYMBOL: XAU_PUBLIC
       BT_PERIOD: ${{ matrix.period }}
       BT_FROM_DATE: ${{ matrix.from_date }}
       BT_TO_DATE: ${{ matrix.to_date }}
-      BT_DEPOSIT: ${{ inputs.deposit }}
-      BT_LEVERAGE: ${{ inputs.leverage }}
-      BT_MODEL: ${{ inputs.model }}
-      BT_TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
-      PUBLIC_FETCH_TIMEOUT_SECONDS: "30"
-      PUBLIC_FETCH_RETRIES: "3"
-      PUBLIC_FETCH_WORKERS: "12"
+      BT_DEPOSIT: ${{ github.event.inputs.deposit || '15000' }}
+      BT_LEVERAGE: ${{ github.event.inputs.leverage || '1:100' }}
+      BT_MODEL: ${{ github.event.inputs.model || '0' }}
+      BT_TIMEOUT_MINUTES: ${{ github.event.inputs.timeout_minutes || '350' }}
+
+      PUBLIC_FETCH_TIMEOUT_SECONDS: "25"
+      PUBLIC_FETCH_RETRIES: "4"
+      PUBLIC_FETCH_RETRY_ROUNDS: "3"
+      PUBLIC_FETCH_WORKERS: "24"
       PUBLIC_MAX_DOWNLOAD_SECONDS: "10800"
       PUBLIC_MAX_HISTORY_DAYS: "370"
-      PUBLIC_MIN_BARS_TO_STOP: "999999999"
-      PUBLIC_MIN_REQUIRED_BARS: "12000"
-      PUBLIC_MIN_REQUIRED_DAYS_WITH_TICKS: "20"
-      PUBLIC_SESSION_HOURS: "8,9,10,11,13,14,15,16"
+      PUBLIC_MIN_REQUIRED_BARS: "150000"
+      PUBLIC_MIN_REQUIRED_DAYS_WITH_TICKS: "220"
+      PUBLIC_MIN_HOUR_SUCCESS_RATIO: "0.90"
+      PUBLIC_SESSION_HOURS: "7,8,9,10,11,12,13,14,15,16,17,18,19,20"
       PUBLIC_CACHE_DIR: ".cache/dukascopy"
+
       MT5_LOGIN: ${{ secrets.MT5_LOGIN }}
       MT5_PASSWORD: ${{ secrets.MT5_SECRET }}
       MT5_SERVER: ${{ secrets.MT5_SERVER }}
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Cache Dukascopy public XAU history
         uses: actions/cache@v4
         with:
           path: .cache/dukascopy
-          key: dukascopy-xau-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-v3
+          key: dukascopy-xau-v27-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-v1
           restore-keys: |
-            dukascopy-xau-${{ matrix.chunk }}-
-            dukascopy-xau-
-      - name: Apply strict M15 profile
+            dukascopy-xau-v27-${{ matrix.chunk }}-
+            dukascopy-xau-v27-
+
+      - name: Run clean V27 MT5 backtest
         shell: pwsh
-        run: |
-          $p = "scripts/run-ea-v26-public-backtest.ps1"
-          $t = Get-Content $p -Raw
-          $t = $t.Replace('"fixed_lot=0.02"', '"fixed_lot=0.04"')
-          $t = $t.Replace('"max_trades_per_day=8"', '"max_trades_per_day=5"')
-          $t = $t.Replace('"profile=v26_m15_filtered_retest"', '"profile=v26_daily_mandatory_0_04_retest"')
-          $t = $t.Replace('FixedLot=0.02; MaxTradesPerDay=8; CooldownMinutes=30; session 11-17; aligned filters', 'FixedLot=0.04; MaxTradesPerDay=5; CooldownMinutes=30; session 15-16; daily fallback')
-          $t = $t.Replace('"FixedLot=0.02"', '"FixedLot=0.04"')
-          $t = $t.Replace('"MaxTradesPerDay=8"', '"MaxTradesPerDay=5"')
-          $t = $t.Replace('"SessionStartHour=11"', '"SessionStartHour=15"')
-          $t = $t.Replace('"SessionEndHour=17"', '"SessionEndHour=16"')
-          $t = $t.Replace('"BuyTP_ATR=0.90"', '"BuyTP_ATR=0.80"')
-          $t = $t.Replace('"BuySL_ATR=1.80"', '"BuySL_ATR=1.70"')
-          Set-Content $p $t -Encoding UTF8
-          $ea = "MQL5/Experts/XAUUSD_V26_PropFirm_100k.mq5"
-          $e = Get-Content $ea -Raw
-          $e = $e.Replace('input double FixedLot = 0.02;', 'input double FixedLot = 0.04;')
-          $e = $e.Replace('input int MaxTradesPerDay = 8;', 'input int MaxTradesPerDay = 5;')
-          $e = $e.Replace('return 0.02;', 'return 0.04;')
-          $e = $e.Replace('if(!IsSessionOk()) return;', 'if(!IsSessionOk()) { if(HasOpenPosition()) trade.PositionClose(Sym); return; }')
-          $helperLines = @(
-            'bool OpenMandatoryDailyTrade()',
-            '{',
-            '   if(tradesToday > 0) return false;',
-            '   MqlDateTime dt;',
-            '   TimeToStruct(TimeCurrent(), dt);',
-            '   if(dt.day_of_week == 0 || dt.day_of_week == 6) return false;',
-            '   if(dt.hour != 15 || dt.min < 45) return false;',
-            '   double atrValue = 0.0;',
-            '   if(!CopyOne(m15AtrHandle, 1, atrValue)) return false;',
-            '   if(atrValue <= 0.0) return false;',
-            '   if(TrendState(PERIOD_H1, false)) return OpenTrade(ORDER_TYPE_SELL, atrValue);',
-            '   return OpenTrade(ORDER_TYPE_BUY, atrValue);',
-            '}'
-          )
-          $helper = $helperLines -join "`n"
-          $e = $e.Replace('void OnTick()', $helper + "`nvoid OnTick()")
-          $e = $e.Replace('if(!IsNewExecutionBar()) return;', 'if(!IsNewExecutionBar()) return; if(OpenMandatoryDailyTrade()) return;')
-          Set-Content $ea $e -Encoding UTF8
-      - name: Run EA V26 3Y MTF chunk
-        shell: pwsh
-        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-ea-v26-public-backtest.ps1
-      - name: Analyze artifact
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-ea-v27-public-backtest.ps1
+
+      - name: Analyze V27 results
         if: always()
         shell: pwsh
         run: |
-          if (!(Test-Path reports)) { New-Item -ItemType Directory -Force -Path reports | Out-Null }
-          Compress-Archive -Path reports/* -DestinationPath reports/_analysis_input.zip -Force
-          python scripts/analyze-public-artifact.py reports/_analysis_input.zip | Tee-Object -FilePath reports/PUBLIC_BACKTEST_ANALYSIS.json
-          python scripts/analyze-public-trade-quality.py reports --deposit ${{ inputs.deposit }} | Tee-Object -FilePath reports/PUBLIC_TRADE_QUALITY.json
+          if (!(Test-Path reports)) {
+            New-Item -ItemType Directory -Force -Path reports | Out-Null
+          }
+          python scripts/analyze-v27-results.py reports --deposit $env:BT_DEPOSIT |
+            Tee-Object -FilePath reports/V27_ANALYSIS_CONSOLE.json
+
       - name: Upload artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: EA-V26-3Y-${{ matrix.period }}-${{ matrix.chunk }}-${{ github.run_number }}-${{ github.sha }}
+          name: EA-V27-CLEAN-${{ matrix.period }}-${{ matrix.chunk }}-${{ github.run_number }}-${{ github.sha }}
           path: reports/**
           if-no-files-found: error
           retention-days: 14
