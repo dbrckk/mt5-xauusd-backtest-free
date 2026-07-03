@@ -79,6 +79,13 @@ jobs:
           $t = $t.Replace('"BuyTP_ATR=0.90"', '"BuyTP_ATR=0.80"')
           $t = $t.Replace('"BuySL_ATR=1.80"', '"BuySL_ATR=1.70"')
           Set-Content $p $t -Encoding UTF8
+          $ea = "MQL5/Experts/XAUUSD_V26_PropFirm_100k.mq5"
+          $e = Get-Content $ea -Raw
+          $e = $e.Replace('input double FixedLot = 0.02;', 'input double FixedLot = 0.04;')
+          $e = $e.Replace('input int MaxTradesPerDay = 8;', 'input int MaxTradesPerDay = 5;')
+          $e = $e.Replace('return 0.02;', 'return 0.04;')
+          $e = $e.Replace('if(!IsSessionOk()) return;', 'if(!IsSessionOk()) { if(HasOpenPosition()) trade.PositionClose(Sym); return; }')
+          Set-Content $ea $e -Encoding UTF8
       - name: Run EA V26 3Y MTF chunk
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-ea-v26-public-backtest.ps1
