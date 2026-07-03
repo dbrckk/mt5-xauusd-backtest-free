@@ -52,17 +52,29 @@ jobs:
       BT_LEVERAGE: ${{ inputs.leverage }}
       BT_MODEL: ${{ inputs.model }}
       BT_TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
-      PUBLIC_FETCH_TIMEOUT_SECONDS: "120"
-      PUBLIC_FETCH_RETRIES: "8"
-      PUBLIC_MAX_DOWNLOAD_SECONDS: "30000"
+      PUBLIC_FETCH_TIMEOUT_SECONDS: "30"
+      PUBLIC_FETCH_RETRIES: "3"
+      PUBLIC_FETCH_WORKERS: "12"
+      PUBLIC_MAX_DOWNLOAD_SECONDS: "10800"
       PUBLIC_MAX_HISTORY_DAYS: "370"
       PUBLIC_MIN_BARS_TO_STOP: "999999999"
-      PUBLIC_MIN_REQUIRED_BARS: "20000"
+      PUBLIC_MIN_REQUIRED_BARS: "12000"
+      PUBLIC_MIN_REQUIRED_DAYS_WITH_TICKS: "20"
+      PUBLIC_SESSION_HOURS: "8,9,10,11,13,14,15,16"
+      PUBLIC_CACHE_DIR: ".cache/dukascopy"
       MT5_LOGIN: ${{ secrets.MT5_LOGIN }}
       MT5_PASSWORD: ${{ secrets.MT5_SECRET }}
       MT5_SERVER: ${{ secrets.MT5_SERVER }}
     steps:
       - uses: actions/checkout@v4
+      - name: Cache Dukascopy public XAU history
+        uses: actions/cache@v4
+        with:
+          path: .cache/dukascopy
+          key: dukascopy-xau-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-v3
+          restore-keys: |
+            dukascopy-xau-${{ matrix.chunk }}-
+            dukascopy-xau-
       - name: Apply strict M15 profile
         shell: pwsh
         run: |
