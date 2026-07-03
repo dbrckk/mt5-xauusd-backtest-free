@@ -46,7 +46,7 @@ permissions:
 
 concurrency:
   group: v27-clean-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   validate:
@@ -55,6 +55,7 @@ jobs:
     timeout-minutes: 420
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         include:
           - chunk: Y1
@@ -83,7 +84,7 @@ jobs:
       PUBLIC_FETCH_TIMEOUT_SECONDS: "25"
       PUBLIC_FETCH_RETRIES: "4"
       PUBLIC_FETCH_RETRY_ROUNDS: "3"
-      PUBLIC_FETCH_WORKERS: "24"
+      PUBLIC_FETCH_WORKERS: "16"
       PUBLIC_MAX_DOWNLOAD_SECONDS: "10800"
       PUBLIC_MAX_HISTORY_DAYS: "370"
       PUBLIC_MIN_REQUIRED_BARS: "150000"
