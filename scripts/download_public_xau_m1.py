@@ -187,9 +187,17 @@ def process_hour(day: dt.date, hour: int, raw: bytes, bars: dict[str, list]) -> 
     return tick_count
 
 
-def fetch_slots(slots: list[tuple[dt.date, int]], deadline: float):
+def fetch_and_process_slots(
+    slots: list[tuple[dt.date, int]],
+    deadline: float,
+    bars: dict[str, list],
+) -> tuple[int, int, int, int, set[dt.date]]:
     pending = list(slots)
-    results: dict[tuple[dt.date, int], tuple[bytes | None, str, str]] = {}
+    total_ticks = 0
+    successful_hours = 0
+    failed_hours = 0
+    missing_404 = 0
+    days_with_ticks: set[dt.date] = set()
 
     for round_no in range(1, FETCH_RETRY_ROUNDS + 1):
         if not pending or time.time() >= deadline:
@@ -197,6 +205,7 @@ def fetch_slots(slots: list[tuple[dt.date, int]], deadline: float):
 
         retry: list[tuple[dt.date, int]] = []
         print(f"FETCH_ROUND={round_no} pending={len(pending)} workers={FETCH_WORKERS}")
+
         with ThreadPoolExecutor(max_workers=FETCH_WORKERS) as pool:
             future_map = {pool.submit(fetch_hour, day, hour): (day, hour) for day, hour in pending}
             for future in as_completed(future_map):
@@ -204,24 +213,37 @@ def fetch_slots(slots: list[tuple[dt.date, int]], deadline: float):
                 try:
                     d, h, raw, status, url = future.result()
                 except Exception as exc:
-                    raw, status, url = None, f"failed:{exc}", hour_url(day, hour)
                     d, h = day, hour
+                    raw, status, url = None, f"failed:{exc}", hour_url(day, hour)
 
-                key = (d, h)
                 status_key = status.split(":", 1)[0]
                 status_counts[status_key] += 1
-                if raw is not None or status == "missing_404":
-                    results[key] = (raw, status, url)
-                else:
-                    retry.append(key)
+
+                if raw is not None:
+                    ticks = process_hour(d, h, raw, bars)
+                    if ticks > 0:
+                        total_ticks += ticks
+                        successful_hours += 1
+                        days_with_ticks.add(d)
+                    else:
+                        retry.append((d, h))
+                    continue
+
+                if status == "missing_404":
+                    missing_404 += 1
+                    missing_downloads.append(url)
+                    continue
+
+                retry.append((d, h))
 
         pending = retry
 
     for day, hour in pending:
+        failed_hours += 1
         url = hour_url(day, hour)
-        results[(day, hour)] = (None, "failed:retry_rounds_exhausted", url)
+        failed_downloads.append(f"{url} | retry_rounds_exhausted")
 
-    return results
+    return total_ticks, successful_hours, failed_hours, missing_404, days_with_ticks
 
 
 def write_csv(out_csv: str, bars: dict[str, list]) -> tuple[int, str]:
@@ -268,31 +290,12 @@ def main() -> int:
     days = market_days(start, end)
     slots = [(day, hour) for day in days for hour in SESSION_HOURS]
     deadline = time.time() + MAX_DOWNLOAD_SECONDS
-    results = fetch_slots(slots, deadline)
-
     bars: dict[str, list] = {}
-    total_ticks = 0
-    days_with_ticks: set[dt.date] = set()
-    successful_hours = 0
-    failed_hours = 0
-    missing_404 = 0
-
-    for (day, hour), (raw, status, url) in sorted(results.items()):
-        if raw is not None:
-            ticks = process_hour(day, hour, raw, bars)
-            if ticks > 0:
-                total_ticks += ticks
-                days_with_ticks.add(day)
-                successful_hours += 1
-            else:
-                failed_hours += 1
-                failed_downloads.append(f"{url} | empty_or_invalid_payload")
-        elif status == "missing_404":
-            missing_404 += 1
-            missing_downloads.append(url)
-        else:
-            failed_hours += 1
-            failed_downloads.append(f"{url} | {status}")
+    total_ticks, successful_hours, failed_hours, missing_404, days_with_ticks = fetch_and_process_slots(
+        slots,
+        deadline,
+        bars,
+    )
 
     bars_count, dataset_sha256 = write_csv(out_csv, bars)
     denominator = successful_hours + failed_hours
@@ -342,7 +345,7 @@ def main() -> int:
     print(f"PUBLIC_HISTORY_FAILED_HOURS={failed_hours}")
     print(f"PUBLIC_HISTORY_MISSING_404={missing_404}")
     print(f"PUBLIC_HISTORY_HOUR_SUCCESS_RATIO={hour_success_ratio:.6f}")
-    print(f"PUBLIC_HISTORY_SYNTHETIC_FILL_BARS=0")
+    print("PUBLIC_HISTORY_SYNTHETIC_FILL_BARS=0")
     print(f"PUBLIC_HISTORY_DATASET_SHA256={dataset_sha256}")
 
     failures = []
