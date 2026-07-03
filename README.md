@@ -75,18 +75,21 @@ Matrix:
 
 The active downloader:
 
-- downloads real Dukascopy XAUUSD ticks;
+- downloads real Dukascopy XAUUSD ticks across the full 24-hour market context;
 - uses bounded concurrency and retry rounds;
 - caches hourly `.bi5` files;
+- processes each downloaded hour immediately to keep memory bounded;
 - writes only minutes containing real ticks;
 - never fills missing minutes with flat synthetic OHLC;
 - hashes the final CSV dataset;
 - records real coverage diagnostics;
 - fails the run when minimum coverage is not reached.
 
+The EA still opens new trades only during its 07:00-20:00 UTC entry window. Full-day history is used so M15/H1/H4 indicators are calculated from the real surrounding market context rather than a truncated session.
+
 Default quality gates:
 
-- at least 150,000 real M1 bars;
+- at least 250,000 real M1 bars;
 - at least 220 days with ticks;
 - at least 90% successful non-404 requested hours;
 - exactly 0 synthetic fill bars.
