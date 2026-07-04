@@ -23,6 +23,7 @@ on:
     branches:
       - main
       - v27-clean-multisetup
+      - v27-execution-validation
     paths:
       - ".github/workflows/ea-v26-3y.yml"
       - "MQL5/Experts/XAUUSD_V27_Clean_MultiSetup.mq5"
@@ -42,11 +43,7 @@ on:
       - "scripts/analyze-v27-results.py"
 
 permissions:
-  contents: write
-
-defaults:
-  run:
-    shell: pwsh
+  contents: read
 
 concurrency:
   group: v27-clean-${{ github.ref }}-${{ github.event_name }}
@@ -104,57 +101,66 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          persist-credentials: true
-          fetch-depth: 0
 
       - name: Cache Dukascopy public XAU history
         uses: actions/cache@v4
         with:
           path: .cache/dukascopy
-          key: dukascopy-xau-v27-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-v3
+          key: dukascopy-xau-v27-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-v4
           restore-keys: |
             dukascopy-xau-v27-${{ matrix.chunk }}-
             dukascopy-xau-v27-
 
-      - name: Apply V27 regime-quality profile
+      - name: Capture committed source digests
         shell: pwsh
         run: |
-          $path = "scripts/run-ea-v27-public-backtest.ps1"
-          $text = Get-Content $path -Raw
-          $replacements = [ordered]@{
-            '"MinSignalScore=78.0"' = '"MinSignalScore=82.0"'
-            '"MinDirectionScoreGap=10.0"' = '"MinDirectionScoreGap=12.0"'
-            '"MinADX=20.0"' = '"MinADX=23.0"'
-            '"MaxSpreadATRFraction=0.07"' = '"MaxSpreadATRFraction=0.05"'
-            '"PullbackTouchATR=0.20"' = '"PullbackTouchATR=0.16"'
-            '"MinBodyRatio=0.34"' = '"MinBodyRatio=0.40"'
-            '"MinVolumeRatio=0.95"' = '"MinVolumeRatio=1.05"'
-            '"BreakoutTP_ATR=1.55"' = '"BreakoutTP_ATR=1.45"'
-            '"BreakoutSL_ATR=1.05"' = '"BreakoutSL_ATR=0.95"'
-            '"PullbackTP_ATR=1.35"' = '"PullbackTP_ATR=1.25"'
-            '"PullbackSL_ATR=1.00"' = '"PullbackSL_ATR=0.90"'
-            '"ContinuationTP_ATR=1.30"' = '"ContinuationTP_ATR=1.20"'
-            '"ContinuationSL_ATR=1.00"' = '"ContinuationSL_ATR=0.90"'
-            '"SweepTP_ATR=1.45"' = '"SweepTP_ATR=1.35"'
-            '"SweepSL_ATR=0.95"' = '"SweepSL_ATR=0.90"'
-            '"BreakEvenTriggerATR=0.85"' = '"BreakEvenTriggerATR=1.15"'
-            '"TrailStartATR=1.25"' = '"TrailStartATR=1.60"'
-            '"TrailDistanceATR=0.70"' = '"TrailDistanceATR=0.85"'
-            '"MaxHoldBars=28"' = '"MaxHoldBars=36"'
-            '"TimeExitMinProgressATR=0.20"' = '"TimeExitMinProgressATR=0.05"'
+          $paths = @(
+            "MQL5/Experts/XAUUSD_V27_Clean_MultiSetup.mq5",
+            "MQL5/Experts/ImportCustomRatesEA.mq5",
+            "scripts/run-ea-v27-public-backtest.ps1",
+            "scripts/download_public_xau_m1.py",
+            "scripts/analyze-v27-results.py"
+          )
+          $digests = [ordered]@{}
+          foreach ($path in $paths) {
+            if (!(Test-Path $path)) { throw "Missing committed source: $path" }
+            $digests[$path] = (Get-FileHash -Algorithm SHA256 -Path $path).Hash
           }
-          foreach ($item in $replacements.GetEnumerator()) {
-            $text = $text.Replace($item.Key, $item.Value)
-          }
-          Set-Content -Path $path -Value $text -Encoding UTF8
-          "Applied V27 regime-quality profile: fewer low-quality trades, stricter spread/volume/body/ADX gates, later BE/trailing, less destructive time exit."
+          $digestPath = Join-Path $env:RUNNER_TEMP "v27-source-digests.json"
+          $digests | ConvertTo-Json | Set-Content -Path $digestPath -Encoding UTF8
+          $digests.GetEnumerator() | ForEach-Object { "SOURCE_SHA256 $($_.Key)=$($_.Value)" }
 
-      - name: Run clean V27 MT5 backtest
+      - name: Run committed V27 MT5 backtest
+        shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-ea-v27-public-backtest.ps1
+
+      - name: Verify source immutability
+        if: always()
+        shell: pwsh
+        run: |
+          $digestPath = Join-Path $env:RUNNER_TEMP "v27-source-digests.json"
+          if (!(Test-Path $digestPath)) { throw "Initial source digest file is missing." }
+          $expected = Get-Content $digestPath -Raw | ConvertFrom-Json
+          $mutated = @()
+          foreach ($property in $expected.PSObject.Properties) {
+            $path = $property.Name
+            if (!(Test-Path $path)) {
+              $mutated += "$path (deleted)"
+              continue
+            }
+            $actual = (Get-FileHash -Algorithm SHA256 -Path $path).Hash
+            if ($actual -ne [string]$property.Value) {
+              $mutated += "$path ($($property.Value) -> $actual)"
+            }
+          }
+          if ($mutated.Count -gt 0) {
+            throw "V27 validation source mutation detected: $($mutated -join '; ')"
+          }
+          "V27_SOURCE_IMMUTABILITY=PASS"
 
       - name: Analyze V27 results
         if: always()
+        shell: pwsh
         run: |
           if (!(Test-Path reports)) {
             New-Item -ItemType Directory -Force -Path reports | Out-Null
@@ -175,12 +181,9 @@ jobs:
             $trades = [int]$analysis.overall.trades
             $summary = "{0}-T{1}-PF{2}-WR{3}-NET{4}" -f $analysis.verdict,$trades,$pf,$wr,$net
             $summary = $summary -replace '[^A-Za-z0-9_.-]', '_'
-            "V27_SUMMARY=$summary" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-            "V27 compact summary: $summary" | Tee-Object -FilePath reports/V27_COMPACT_SUMMARY.txt
-          } else {
-            "V27_SUMMARY=$summary" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-            "V27 compact summary: $summary" | Tee-Object -FilePath reports/V27_COMPACT_SUMMARY.txt
           }
+          "V27_SUMMARY=$summary" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "V27 compact summary: $summary" | Tee-Object -FilePath reports/V27_COMPACT_SUMMARY.txt
 
       - name: Upload artifact
         if: always()
@@ -190,57 +193,3 @@ jobs:
           path: reports/**
           if-no-files-found: error
           retention-days: 14
-
-      - name: Publish readable validation results
-        if: always() && github.event_name != 'pull_request'
-        continue-on-error: true
-        env:
-          CHUNK: ${{ matrix.chunk }}
-          PERIOD: ${{ matrix.period }}
-          FROM_DATE: ${{ matrix.from_date }}
-          TO_DATE: ${{ matrix.to_date }}
-        run: |
-          $target = "validation-results/v27/run-${{ github.run_number }}/$env:CHUNK"
-          New-Item -ItemType Directory -Force -Path $target | Out-Null
-          if (Test-Path reports) {
-            Copy-Item -Path reports/* -Destination $target -Recurse -Force
-          }
-
-          $manifest = [ordered]@{
-            workflow = "EA V27 CLEAN MULTI-SETUP 3Y BACKTEST"
-            run_id = "${{ github.run_id }}"
-            run_number = "${{ github.run_number }}"
-            commit_sha = "${{ github.sha }}"
-            branch = "${{ github.ref_name }}"
-            chunk = $env:CHUNK
-            period = $env:PERIOD
-            from_date = $env:FROM_DATE
-            to_date = $env:TO_DATE
-            deposit = $env:BT_DEPOSIT
-            leverage = $env:BT_LEVERAGE
-            model = $env:BT_MODEL
-            generated_at_utc = (Get-Date).ToUniversalTime().ToString("o")
-          }
-          $manifest | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 "$target/manifest.json"
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add validation-results/v27/run-${{ github.run_number }}/$env:CHUNK
-
-          $changes = git status --porcelain
-          if (-not $changes) {
-            Write-Host "No validation result changes to publish."
-            exit 0
-          }
-
-          git commit -m "Publish V27 validation $env:CHUNK results for run ${{ github.run_number }}"
-
-          for ($i = 1; $i -le 6; $i++) {
-            git pull --rebase origin ${{ github.ref_name }}
-            git push origin HEAD:${{ github.ref_name }}
-            if ($LASTEXITCODE -eq 0) { exit 0 }
-            Start-Sleep -Seconds (5 * $i)
-          }
-
-          Write-Error "Failed to publish validation results after retries."
-          exit 1
