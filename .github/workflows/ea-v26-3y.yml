@@ -144,8 +144,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cache/dukascopy
-          key: dukascopy-xau-v28-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-v1
+          key: dukascopy-xau-v28-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-v2
           restore-keys: |
+            dukascopy-xau-v28-${{ matrix.chunk }}-
+            dukascopy-xau-v28-
             dukascopy-xau-v27-${{ matrix.chunk }}-
             dukascopy-xau-v27-
 
