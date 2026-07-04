@@ -42,7 +42,11 @@ on:
       - "scripts/analyze-v27-results.py"
 
 permissions:
-  contents: read
+  contents: write
+
+defaults:
+  run:
+    shell: pwsh
 
 concurrency:
   group: v27-clean-${{ github.ref }}-${{ github.event_name }}
@@ -100,6 +104,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
 
       - name: Cache Dukascopy public XAU history
         uses: actions/cache@v4
@@ -111,12 +118,10 @@ jobs:
             dukascopy-xau-v27-
 
       - name: Run clean V27 MT5 backtest
-        shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-ea-v27-public-backtest.ps1
 
       - name: Analyze V27 results
         if: always()
-        shell: pwsh
         run: |
           if (!(Test-Path reports)) {
             New-Item -ItemType Directory -Force -Path reports | Out-Null
@@ -132,3 +137,57 @@ jobs:
           path: reports/**
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish readable validation results
+        if: always() && github.event_name != 'pull_request'
+        continue-on-error: true
+        env:
+          CHUNK: ${{ matrix.chunk }}
+          PERIOD: ${{ matrix.period }}
+          FROM_DATE: ${{ matrix.from_date }}
+          TO_DATE: ${{ matrix.to_date }}
+        run: |
+          $target = "validation-results/v27/run-${{ github.run_number }}/$env:CHUNK"
+          New-Item -ItemType Directory -Force -Path $target | Out-Null
+          if (Test-Path reports) {
+            Copy-Item -Path reports/* -Destination $target -Recurse -Force
+          }
+
+          $manifest = [ordered]@{
+            workflow = "EA V27 CLEAN MULTI-SETUP 3Y BACKTEST"
+            run_id = "${{ github.run_id }}"
+            run_number = "${{ github.run_number }}"
+            commit_sha = "${{ github.sha }}"
+            branch = "${{ github.ref_name }}"
+            chunk = $env:CHUNK
+            period = $env:PERIOD
+            from_date = $env:FROM_DATE
+            to_date = $env:TO_DATE
+            deposit = $env:BT_DEPOSIT
+            leverage = $env:BT_LEVERAGE
+            model = $env:BT_MODEL
+            generated_at_utc = (Get-Date).ToUniversalTime().ToString("o")
+          }
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 "$target/manifest.json"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add validation-results/v27/run-${{ github.run_number }}/$env:CHUNK
+
+          $changes = git status --porcelain
+          if (-not $changes) {
+            Write-Host "No validation result changes to publish."
+            exit 0
+          }
+
+          git commit -m "Publish V27 validation $env:CHUNK results for run ${{ github.run_number }}"
+
+          for ($i = 1; $i -le 6; $i++) {
+            git pull --rebase origin ${{ github.ref_name }}
+            git push origin HEAD:${{ github.ref_name }}
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            Start-Sleep -Seconds (5 * $i)
+          }
+
+          Write-Error "Failed to publish validation results after retries."
+          exit 1
