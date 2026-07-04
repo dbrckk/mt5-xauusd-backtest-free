@@ -24,6 +24,7 @@ on:
       - main
       - v27-clean-multisetup
       - v27-execution-validation
+      - v27-canonical-validation
     paths:
       - ".github/workflows/ea-v26-3y.yml"
       - "MQL5/Experts/XAUUSD_V27_Clean_MultiSetup.mq5"
@@ -99,8 +100,49 @@ jobs:
       MT5_SERVER: ${{ secrets.MT5_SERVER }}
 
     steps:
-      - name: Checkout
+      - name: Checkout exact source revision
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Validate canonical V27 identity
+        shell: pwsh
+        run: |
+          $eaPath = "MQL5/Experts/XAUUSD_V27_Clean_MultiSetup.mq5"
+          if (!(Test-Path $eaPath)) { throw "Canonical V27 EA is missing: $eaPath" }
+          $ea = Get-Content $eaPath -Raw
+
+          $required = @(
+            "Natural multi-setup XAUUSD intraday EA",
+            "V27 Clean Multi-Setup",
+            "struct SignalCandidate",
+            '"BREAKOUT"',
+            '"PULLBACK"',
+            '"CONTINUATION"',
+            '"SWEEP"',
+            "V27_CLEAN_MULTISETUP"
+          )
+          foreach ($marker in $required) {
+            if (!$ea.Contains($marker)) { throw "Canonical V27 marker missing: $marker" }
+          }
+
+          $forbidden = @("ZLEMA_AUTO", "Zlema(", "zlema_cross_htf_volatility")
+          foreach ($marker in $forbidden) {
+            if ($ea.Contains($marker)) { throw "Wrong strategy source detected: $marker" }
+          }
+
+          New-Item -ItemType Directory -Force -Path reports | Out-Null
+          $checkedOutSha = (git rev-parse HEAD).Trim()
+          $eaSha = (Get-FileHash -Algorithm SHA256 -Path $eaPath).Hash
+          @(
+            "strategy=XAUUSD_V27_Clean_MultiSetup",
+            "identity=PASS",
+            "checked_out_sha=$checkedOutSha",
+            "ea_sha256=$eaSha",
+            "forced_trades=false",
+            "arbitrary_daily_close=false"
+          ) | Set-Content -Path reports/V27_SOURCE_IDENTITY.txt -Encoding UTF8
+          Get-Content reports/V27_SOURCE_IDENTITY.txt
 
       - name: Cache Dukascopy public XAU history
         uses: actions/cache@v4
@@ -189,7 +231,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: EA-V27-CLEAN-${{ matrix.period }}-${{ matrix.chunk }}-${{ env.V27_SUMMARY }}-${{ github.run_number }}-${{ github.sha }}
+          name: EA-V27-CANONICAL-${{ matrix.period }}-${{ matrix.chunk }}-${{ env.V27_SUMMARY }}-${{ github.run_number }}-${{ github.sha }}
           path: reports/**
           if-no-files-found: error
           retention-days: 14
