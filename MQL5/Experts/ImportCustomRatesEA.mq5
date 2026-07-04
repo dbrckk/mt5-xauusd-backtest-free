@@ -1,5 +1,5 @@
 #property strict
-#property version   "1.10"
+#property version   "1.20"
 #property description "Imports strict public M1 OHLC data into a leverage-aware custom MT5 symbol."
 
 input string InpCsvFile = "xau_public_m1.csv";
@@ -36,11 +36,17 @@ bool EnsureSymbol()
 
    CustomSymbolSetInteger(InpCustomSymbol, SYMBOL_DIGITS, InpDigits);
    CustomSymbolSetDouble(InpCustomSymbol, SYMBOL_POINT, InpPoint);
+
+   // Critical V27 execution fix: the source data contains valid prices at
+   // 0.001 precision. The base symbol can inherit a coarser tick size, which
+   // causes perfectly valid market orders to be rejected as "Invalid price".
+   CustomSymbolSetDouble(InpCustomSymbol, SYMBOL_TRADE_TICK_SIZE, InpPoint);
+
    CustomSymbolSetInteger(InpCustomSymbol, SYMBOL_SPREAD_FLOAT, true);
    CustomSymbolSetInteger(InpCustomSymbol, SYMBOL_TRADE_MODE, SYMBOL_TRADE_MODE_FULL);
 
-   // Critical V27 fix: CFDLEVERAGE applies the tester account leverage.
-   // The previous CFD mode required near-full notional margin and broke Y3.
+   // CFDLEVERAGE applies the tester account leverage. The previous CFD mode
+   // required near-full notional margin and broke the former Y3 validation.
    CustomSymbolSetInteger(InpCustomSymbol, SYMBOL_TRADE_CALC_MODE, SYMBOL_CALC_MODE_CFDLEVERAGE);
    CustomSymbolSetDouble(InpCustomSymbol, SYMBOL_TRADE_CONTRACT_SIZE, 100.0);
    CustomSymbolSetDouble(InpCustomSymbol, SYMBOL_VOLUME_MIN, 0.01);
@@ -158,6 +164,9 @@ int OnInit()
    int updateError = GetLastError();
 
    long calcMode = SymbolInfoInteger(InpCustomSymbol, SYMBOL_TRADE_CALC_MODE);
+   double tickSize = SymbolInfoDouble(InpCustomSymbol, SYMBOL_TRADE_TICK_SIZE);
+   double pointSize = SymbolInfoDouble(InpCustomSymbol, SYMBOL_POINT);
+
    Print(
       "IMPORT_CUSTOM_RATES_DONE count=", count,
       " replaced=", replaced,
@@ -165,6 +174,8 @@ int OnInit()
       " updated=", updated,
       " updateError=", updateError,
       " calcMode=", calcMode,
+      " point=", DoubleToString(pointSize, InpDigits),
+      " tickSize=", DoubleToString(tickSize, InpDigits),
       " skippedNonIncreasing=", nonIncreasingRows
    );
 
@@ -174,6 +185,8 @@ int OnInit()
       " from=" + TimeToString(fromTime) +
       " to=" + TimeToString(toTime) +
       " calc_mode=" + IntegerToString((int)calcMode) +
+      " point=" + DoubleToString(pointSize, InpDigits) +
+      " tick_size=" + DoubleToString(tickSize, InpDigits) +
       " skipped_non_increasing=" + IntegerToString(nonIncreasingRows);
 
    WriteResult(result);
