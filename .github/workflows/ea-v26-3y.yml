@@ -105,10 +105,42 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cache/dukascopy
-          key: dukascopy-xau-v27-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-v2
+          key: dukascopy-xau-v27-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-v3
           restore-keys: |
             dukascopy-xau-v27-${{ matrix.chunk }}-
             dukascopy-xau-v27-
+
+      - name: Apply V27 PF rework profile
+        shell: pwsh
+        run: |
+          $path = "scripts/run-ea-v27-public-backtest.ps1"
+          $text = Get-Content $path -Raw
+          $replacements = [ordered]@{
+            '"MinSignalScore=72.0"' = '"MinSignalScore=76.0"'
+            '"MinDirectionScoreGap=6.0"' = '"MinDirectionScoreGap=8.0"'
+            '"MinADX=16.0"' = '"MinADX=18.0"'
+            '"MaxSpreadATRFraction=0.10"' = '"MaxSpreadATRFraction=0.07"'
+            '"MinVolumeRatio=0.80"' = '"MinVolumeRatio=0.90"'
+            '"BreakoutTP_ATR=1.25"' = '"BreakoutTP_ATR=1.65"'
+            '"BreakoutSL_ATR=1.35"' = '"BreakoutSL_ATR=1.15"'
+            '"PullbackTP_ATR=1.10"' = '"PullbackTP_ATR=1.45"'
+            '"PullbackSL_ATR=1.25"' = '"PullbackSL_ATR=1.05"'
+            '"ContinuationTP_ATR=1.00"' = '"ContinuationTP_ATR=1.45"'
+            '"ContinuationSL_ATR=1.30"' = '"ContinuationSL_ATR=1.10"'
+            '"SweepTP_ATR=1.30"' = '"SweepTP_ATR=1.70"'
+            '"SweepSL_ATR=1.20"' = '"SweepSL_ATR=1.05"'
+            '"BreakEvenTriggerATR=0.65"' = '"BreakEvenTriggerATR=0.90"'
+            '"BreakEvenOffsetATR=0.05"' = '"BreakEvenOffsetATR=0.02"'
+            '"TrailStartATR=1.00"' = '"TrailStartATR=1.35"'
+            '"TrailDistanceATR=0.75"' = '"TrailDistanceATR=0.70"'
+            '"MaxHoldBars=20"' = '"MaxHoldBars=28"'
+            '"TimeExitMinProgressATR=0.10"' = '"TimeExitMinProgressATR=0.18"'
+          }
+          foreach ($item in $replacements.GetEnumerator()) {
+            $text = $text.Replace($item.Key, $item.Value)
+          }
+          Set-Content -Path $path -Value $text -Encoding UTF8
+          "Applied V27 PF rework profile: higher R targets, tighter initial risk, stricter spread/ADX/volume gates."
 
       - name: Run clean V27 MT5 backtest
         shell: pwsh
