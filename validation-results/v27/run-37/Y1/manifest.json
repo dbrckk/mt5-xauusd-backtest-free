@@ -1,0 +1,15 @@
+{
+  "workflow": "EA V27 CLEAN MULTI-SETUP 3Y BACKTEST",
+  "run_id": "28700961470",
+  "run_number": "37",
+  "commit_sha": "3b7ab0d958f062b1a912f59c3cbbe82c5be18144",
+  "branch": "main",
+  "chunk": "Y1",
+  "period": "M15",
+  "from_date": "2023.06.21",
+  "to_date": "2024.06.21",
+  "deposit": "15000",
+  "leverage": "1:100",
+  "model": "0",
+  "generated_at_utc": "2026-07-04T09:18:37.9365158Z"
+}
