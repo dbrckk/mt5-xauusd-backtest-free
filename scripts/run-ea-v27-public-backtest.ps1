@@ -87,7 +87,7 @@ function Read-TesterLogBlob([string]$ReportsRoot) {
   $parts = @()
   Get-ChildItem -Path $ReportsRoot -Recurse -Include *.log -File -ErrorAction SilentlyContinue | ForEach-Object {
     $text = Read-AnyText $_.FullName
-    if ($text -match "XAU_PUBLIC|XAUUSD_V27|Test passed|final balance|deal #|No money") {
+    if ($text -match "XAU_PUBLIC|XAUUSD_V27|V28|Test passed|final balance|deal #|No money") {
       $parts += "`n===== $($_.FullName) =====`n$text"
     }
   }
@@ -105,13 +105,13 @@ function Write-FallbackReport(
   $balance = if ($logText -match "final balance\s+([0-9.]+)\s+USD") { $Matches[1] } else { "unknown" }
   $passed = if ($logText -match "Test passed") { "YES" } else { "NO" }
   $encoded = [System.Net.WebUtility]::HtmlEncode($logText)
-  $path = Join-Path $ReportsRoot "V27_PUBLIC_BACKTEST_FALLBACK_REPORT.html"
+  $path = Join-Path $ReportsRoot "V28_PUBLIC_BACKTEST_FALLBACK_REPORT.html"
   $html = @"
 <!doctype html>
 <html>
-<head><meta charset="utf-8"><title>V27 Clean MT5 Backtest</title></head>
+<head><meta charset="utf-8"><title>V28 Contextual Risk MT5 Backtest</title></head>
 <body>
-<h1>V27 Clean MT5 Backtest</h1>
+<h1>V28 Contextual Risk MT5 Backtest</h1>
 <table>
 <tr><th>Symbol</th><td>$Symbol</td></tr>
 <tr><th>Period</th><td>$Period</td></tr>
@@ -147,14 +147,16 @@ $timeout = [Math]::Max(30, [Math]::Min(350, $timeout))
 $eaSource = Join-Path $repo "MQL5\Experts\XAUUSD_V27_Clean_MultiSetup.mq5"
 $importerSource = Join-Path $repo "MQL5\Experts\ImportCustomRatesEA.mq5"
 
-if (!(Test-Path $eaSource)) { throw "EA source not found: $eaSource" }
+if (!(Test-Path $eaSource)) { throw "V28 EA source not found: $eaSource" }
 if (!(Test-Path $importerSource)) { throw "Importer source not found: $importerSource" }
 
 $runMarker = @(
-  "strategy=XAUUSD_V27_Clean_MultiSetup",
+  "strategy=XAUUSD_V28_Contextual_Router",
   "forced_trades=false",
   "arbitrary_daily_close=false",
-  "natural_setups=BREAKOUT,PULLBACK,CONTINUATION,SWEEP",
+  "risk_normalized=true",
+  "risk_percent=0.20",
+  "routes=BREAKOUT_BUY_07_08|PULLBACK_BUY_13_16|CONTINUATION_SELL_07_08|SWEEP_SELL_13_16",
   "symbol=$symbol",
   "period=$period",
   "from_date=$from",
@@ -163,7 +165,7 @@ $runMarker = @(
   "leverage=$leverage",
   "model=$model"
 )
-$runMarker | Set-Content -Path (Join-Path $reportsRoot "V27_CURRENT_RUN.txt") -Encoding UTF8
+$runMarker | Set-Content -Path (Join-Path $reportsRoot "V28_CURRENT_RUN.txt") -Encoding UTF8
 
 Section "Install MetaTrader 5"
 $installer = Join-Path $env:RUNNER_TEMP "mt5setup.exe"
@@ -224,7 +226,7 @@ $filesDir = Join-Path $dataPath "MQL5\Files"
 New-Item -ItemType Directory -Force -Path $filesDir | Out-Null
 Copy-Item $csvPath (Join-Path $filesDir "xau_public_m1.csv") -Force
 
-Section "Compile importer and V27 EA"
+Section "Compile importer and V28 EA"
 $targetExperts = Join-Path $dataPath "MQL5\Experts"
 New-Item -ItemType Directory -Force -Path $targetExperts | Out-Null
 
@@ -234,7 +236,7 @@ Copy-Item $eaSource $eaDestination -Force
 Copy-Item $importerSource $importerDestination -Force
 
 $compileImporterLog = Join-Path $reportsRoot "compile_importer_ea.log"
-$compileMainLog = Join-Path $reportsRoot "compile_v27_ea.log"
+$compileMainLog = Join-Path $reportsRoot "compile_v28_ea.log"
 
 Start-Process -FilePath $metaeditor -ArgumentList "/compile:`"$importerDestination`" /log:`"$compileImporterLog`"" -PassThru -Wait | Out-Null
 Start-Sleep -Seconds 2
@@ -247,11 +249,11 @@ if (Test-Path $compileMainLog) { Get-Content $compileMainLog | ForEach-Object { 
 $importerEx5 = [IO.Path]::ChangeExtension($importerDestination, ".ex5")
 $eaEx5 = [IO.Path]::ChangeExtension($eaDestination, ".ex5")
 if (!(Test-Path $importerEx5)) { throw "Importer compilation failed." }
-if (!(Test-Path $eaEx5)) { throw "V27 EA compilation failed." }
+if (!(Test-Path $eaEx5)) { throw "V28 EA compilation failed." }
 
 Section "Import CSV into XAU_PUBLIC"
 $importerName = [IO.Path]::GetFileNameWithoutExtension($importerSource)
-$importIni = Join-Path $repo "V27_MT5_ImportCustomSymbol.ini"
+$importIni = Join-Path $repo "V28_MT5_ImportCustomSymbol.ini"
 $importText = @"
 [Experts]
 AllowLiveTrading=0
@@ -286,17 +288,23 @@ if (!((Get-Content $importResult -Raw) -match "IMPORT_OK")) {
   throw "Custom symbol import failed."
 }
 
-Section "Create canonical V27 tester profile"
+Section "Create canonical V28 tester profile"
 $setDir = Join-Path $dataPath "MQL5\Profiles\Tester"
 New-Item -ItemType Directory -Force -Path $setDir | Out-Null
-$setPath = Join-Path $setDir "V27_CLEAN.set"
+$setName = "V28_CONTEXTUAL_RISK.set"
+$setPath = Join-Path $setDir $setName
 
 $setLines = @(
   "InpTradeSymbol=XAU_PUBLIC",
   "FixedLot=0.02",
+  "UseRiskPercent=true",
+  "RiskPercent=0.20",
+  "UseEquityForRisk=true",
+  "MaxRiskLot=2.00",
+  "MinLotRiskTolerance=1.10",
   "MaxTradesPerDay=4",
   "CooldownMinutes=45",
-  "MagicNumber=270100",
+  "MagicNumber=280100",
   "SlippagePoints=120",
   "BrokerStopBufferPoints=40",
   "UseSession=true",
@@ -343,16 +351,16 @@ $setLines = @(
   "MaxHoldBars=28",
   "TimeExitMinProgressATR=0.20",
   "UseCSVJournal=true",
-  "CSVJournalName=V27_CLEAN_journal.csv"
+  "CSVJournalName=V28_CONTEXTUAL_journal.csv"
 )
 $setLines | Set-Content -Path $setPath -Encoding ASCII
-Copy-Item $setPath (Join-Path $reportsRoot "V27_CLEAN.set") -Force
+Copy-Item $setPath (Join-Path $reportsRoot $setName) -Force
 
-Section "Run V27 Strategy Tester"
+Section "Run V28 Strategy Tester"
 $eaName = [IO.Path]::GetFileNameWithoutExtension($eaSource)
-$reportBaseName = "V27_${symbol}_${period}_${from}_${to}_model${model}" -replace "[:\\/ ]", "_"
+$reportBaseName = "V28_${symbol}_${period}_${from}_${to}_model${model}" -replace "[:\\/ ]", "_"
 $reportBasePath = Join-Path $reportsRoot $reportBaseName
-$testIni = Join-Path $repo "V27_MT5_Backtest.ini"
+$testIni = Join-Path $repo "V28_MT5_Backtest.ini"
 
 $testerInputs = $setLines -join "`r`n"
 $testText = @"
@@ -366,7 +374,7 @@ Profile=0
 MaxBars=2000000
 [Tester]
 Expert=$eaName
-ExpertParameters=V27_CLEAN.set
+ExpertParameters=$setName
 Symbol=$symbol
 Period=$period
 Deposit=$deposit
@@ -391,20 +399,20 @@ $testerInputs
 
 Set-Content -Path $testIni -Value $testText -Encoding ASCII
 Add-Account $testIni $reportsRoot
-Copy-Item $testIni (Join-Path $reportsRoot "V27_MT5_Backtest.ini") -Force
+Copy-Item $testIni (Join-Path $reportsRoot "V28_MT5_Backtest.ini") -Force
 
 Kill-MT5
 $testProcess = Start-Process -FilePath $terminal -ArgumentList "/config:`"$testIni`"" -PassThru
 if (-not $testProcess.WaitForExit($timeout * 60 * 1000)) {
   Kill-MT5
-  throw "V27 backtest timed out after $timeout minutes."
+  throw "V28 backtest timed out after $timeout minutes."
 }
 Start-Sleep -Seconds 10
 
 Copy-Logs $dataPath $reportsRoot $dataRoot
-$journalPath = Join-Path $filesDir "V27_CLEAN_journal.csv"
+$journalPath = Join-Path $filesDir "V28_CONTEXTUAL_journal.csv"
 if (Test-Path $journalPath) {
-  Copy-Item $journalPath (Join-Path $reportsRoot "V27_CLEAN_journal.csv") -Force
+  Copy-Item $journalPath (Join-Path $reportsRoot "V28_CONTEXTUAL_journal.csv") -Force
 }
 
 $foundReports = Copy-FoundReports @(
