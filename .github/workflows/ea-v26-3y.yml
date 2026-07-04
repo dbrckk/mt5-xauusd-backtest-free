@@ -112,10 +112,43 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cache/dukascopy
-          key: dukascopy-xau-v27-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-v2
+          key: dukascopy-xau-v27-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-v3
           restore-keys: |
             dukascopy-xau-v27-${{ matrix.chunk }}-
             dukascopy-xau-v27-
+
+      - name: Apply V27 regime-quality profile
+        shell: pwsh
+        run: |
+          $path = "scripts/run-ea-v27-public-backtest.ps1"
+          $text = Get-Content $path -Raw
+          $replacements = [ordered]@{
+            '"MinSignalScore=78.0"' = '"MinSignalScore=82.0"'
+            '"MinDirectionScoreGap=10.0"' = '"MinDirectionScoreGap=12.0"'
+            '"MinADX=20.0"' = '"MinADX=23.0"'
+            '"MaxSpreadATRFraction=0.07"' = '"MaxSpreadATRFraction=0.05"'
+            '"PullbackTouchATR=0.20"' = '"PullbackTouchATR=0.16"'
+            '"MinBodyRatio=0.34"' = '"MinBodyRatio=0.40"'
+            '"MinVolumeRatio=0.95"' = '"MinVolumeRatio=1.05"'
+            '"BreakoutTP_ATR=1.55"' = '"BreakoutTP_ATR=1.45"'
+            '"BreakoutSL_ATR=1.05"' = '"BreakoutSL_ATR=0.95"'
+            '"PullbackTP_ATR=1.35"' = '"PullbackTP_ATR=1.25"'
+            '"PullbackSL_ATR=1.00"' = '"PullbackSL_ATR=0.90"'
+            '"ContinuationTP_ATR=1.30"' = '"ContinuationTP_ATR=1.20"'
+            '"ContinuationSL_ATR=1.00"' = '"ContinuationSL_ATR=0.90"'
+            '"SweepTP_ATR=1.45"' = '"SweepTP_ATR=1.35"'
+            '"SweepSL_ATR=0.95"' = '"SweepSL_ATR=0.90"'
+            '"BreakEvenTriggerATR=0.85"' = '"BreakEvenTriggerATR=1.15"'
+            '"TrailStartATR=1.25"' = '"TrailStartATR=1.60"'
+            '"TrailDistanceATR=0.70"' = '"TrailDistanceATR=0.85"'
+            '"MaxHoldBars=28"' = '"MaxHoldBars=36"'
+            '"TimeExitMinProgressATR=0.20"' = '"TimeExitMinProgressATR=0.05"'
+          }
+          foreach ($item in $replacements.GetEnumerator()) {
+            $text = $text.Replace($item.Key, $item.Value)
+          }
+          Set-Content -Path $path -Value $text -Encoding UTF8
+          "Applied V27 regime-quality profile: fewer low-quality trades, stricter spread/volume/body/ADX gates, later BE/trailing, less destructive time exit."
 
       - name: Run clean V27 MT5 backtest
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-ea-v27-public-backtest.ps1
@@ -129,11 +162,31 @@ jobs:
           python scripts/analyze-v27-results.py reports --deposit $env:BT_DEPOSIT |
             Tee-Object -FilePath reports/V27_ANALYSIS_CONSOLE.json
 
+      - name: Export compact V27 summary
+        if: always()
+        shell: pwsh
+        run: |
+          $summary = "NO_ANALYSIS"
+          if (Test-Path reports/V27_ANALYSIS.json) {
+            $analysis = Get-Content reports/V27_ANALYSIS.json -Raw | ConvertFrom-Json
+            $pf = if ($null -eq $analysis.overall.profit_factor) { "NA" } else { "{0:N2}" -f [double]$analysis.overall.profit_factor }
+            $wr = if ($null -eq $analysis.overall.win_rate) { "NA" } else { "{0:N1}" -f ([double]$analysis.overall.win_rate * 100.0) }
+            $net = "{0:N0}" -f [double]$analysis.overall.net_profit
+            $trades = [int]$analysis.overall.trades
+            $summary = "{0}-T{1}-PF{2}-WR{3}-NET{4}" -f $analysis.verdict,$trades,$pf,$wr,$net
+            $summary = $summary -replace '[^A-Za-z0-9_.-]', '_'
+            "V27_SUMMARY=$summary" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            "V27 compact summary: $summary" | Tee-Object -FilePath reports/V27_COMPACT_SUMMARY.txt
+          } else {
+            "V27_SUMMARY=$summary" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            "V27 compact summary: $summary" | Tee-Object -FilePath reports/V27_COMPACT_SUMMARY.txt
+          }
+
       - name: Upload artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: EA-V27-CLEAN-${{ matrix.period }}-${{ matrix.chunk }}-${{ github.run_number }}-${{ github.sha }}
+          name: EA-V27-CLEAN-${{ matrix.period }}-${{ matrix.chunk }}-${{ env.V27_SUMMARY }}-${{ github.run_number }}-${{ github.sha }}
           path: reports/**
           if-no-files-found: error
           retention-days: 14
