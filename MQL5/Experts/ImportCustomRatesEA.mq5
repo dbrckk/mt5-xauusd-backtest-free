@@ -1,6 +1,6 @@
 #property strict
-#property version   "1.20"
-#property description "Imports strict public M1 OHLC data into a leverage-aware custom MT5 symbol."
+#property version   "1.21"
+#property description "Imports strict public M1 OHLC data into a leverage-aware custom MT5 symbol and validates symbol invariants."
 
 input string InpCsvFile = "xau_public_m1.csv";
 input string InpCustomSymbol = "XAU_PUBLIC";
@@ -37,16 +37,14 @@ bool EnsureSymbol()
    CustomSymbolSetInteger(InpCustomSymbol, SYMBOL_DIGITS, InpDigits);
    CustomSymbolSetDouble(InpCustomSymbol, SYMBOL_POINT, InpPoint);
 
-   // Critical V27 execution fix: the source data contains valid prices at
-   // 0.001 precision. The base symbol can inherit a coarser tick size, which
-   // causes perfectly valid market orders to be rejected as "Invalid price".
+   // Source prices are valid to 0.001. A coarser inherited tick size would
+   // reject natural entries as Invalid price, so it is explicitly fixed.
    CustomSymbolSetDouble(InpCustomSymbol, SYMBOL_TRADE_TICK_SIZE, InpPoint);
 
    CustomSymbolSetInteger(InpCustomSymbol, SYMBOL_SPREAD_FLOAT, true);
    CustomSymbolSetInteger(InpCustomSymbol, SYMBOL_TRADE_MODE, SYMBOL_TRADE_MODE_FULL);
 
-   // CFDLEVERAGE applies the tester account leverage. The previous CFD mode
-   // required near-full notional margin and broke the former Y3 validation.
+   // Apply tester leverage instead of requiring near-full notional margin.
    CustomSymbolSetInteger(InpCustomSymbol, SYMBOL_TRADE_CALC_MODE, SYMBOL_CALC_MODE_CFDLEVERAGE);
    CustomSymbolSetDouble(InpCustomSymbol, SYMBOL_TRADE_CONTRACT_SIZE, 100.0);
    CustomSymbolSetDouble(InpCustomSymbol, SYMBOL_VOLUME_MIN, 0.01);
@@ -63,6 +61,34 @@ bool EnsureSymbol()
    return true;
 }
 
+bool ValidateSymbolInvariants(string &details)
+{
+   long calcMode = SymbolInfoInteger(InpCustomSymbol, SYMBOL_TRADE_CALC_MODE);
+   double pointSize = SymbolInfoDouble(InpCustomSymbol, SYMBOL_POINT);
+   double tickSize = SymbolInfoDouble(InpCustomSymbol, SYMBOL_TRADE_TICK_SIZE);
+   double contractSize = SymbolInfoDouble(InpCustomSymbol, SYMBOL_TRADE_CONTRACT_SIZE);
+   double volumeMin = SymbolInfoDouble(InpCustomSymbol, SYMBOL_VOLUME_MIN);
+   double volumeStep = SymbolInfoDouble(InpCustomSymbol, SYMBOL_VOLUME_STEP);
+
+   double tolerance = MathMax(0.000000001, InpPoint * 0.0001);
+   bool pointOk = MathAbs(pointSize - InpPoint) <= tolerance;
+   bool tickOk = MathAbs(tickSize - InpPoint) <= tolerance;
+   bool leverageModeOk = calcMode == SYMBOL_CALC_MODE_CFDLEVERAGE;
+   bool contractOk = MathAbs(contractSize - 100.0) <= 0.000001;
+   bool minLotOk = MathAbs(volumeMin - 0.01) <= 0.0000001;
+   bool volumeStepOk = MathAbs(volumeStep - 0.01) <= 0.0000001;
+
+   details =
+      "calc_mode=" + IntegerToString((int)calcMode) +
+      " point=" + DoubleToString(pointSize, InpDigits) +
+      " tick_size=" + DoubleToString(tickSize, InpDigits) +
+      " contract_size=" + DoubleToString(contractSize, 2) +
+      " volume_min=" + DoubleToString(volumeMin, 2) +
+      " volume_step=" + DoubleToString(volumeStep, 2);
+
+   return pointOk && tickOk && leverageModeOk && contractOk && minLotOk && volumeStepOk;
+}
+
 int OnInit()
 {
    Print("IMPORT_CUSTOM_RATES_START file=", InpCsvFile, " symbol=", InpCustomSymbol);
@@ -73,6 +99,17 @@ int OnInit()
       TerminalClose(2);
       return INIT_FAILED;
    }
+
+   string invariantDetails = "";
+   if(!ValidateSymbolInvariants(invariantDetails))
+   {
+      string invariantError = "IMPORT_FAILED symbol_invariant_error " + invariantDetails;
+      Print(invariantError);
+      WriteResult(invariantError);
+      TerminalClose(5);
+      return INIT_FAILED;
+   }
+   Print("SYMBOL_INVARIANTS_OK ", invariantDetails);
 
    int handle = FileOpen(InpCsvFile, FILE_READ | FILE_CSV | FILE_ANSI, ',');
    if(handle == INVALID_HANDLE)
@@ -163,9 +200,16 @@ int OnInit()
    int updated = CustomRatesUpdate(InpCustomSymbol, rates);
    int updateError = GetLastError();
 
-   long calcMode = SymbolInfoInteger(InpCustomSymbol, SYMBOL_TRADE_CALC_MODE);
-   double tickSize = SymbolInfoDouble(InpCustomSymbol, SYMBOL_TRADE_TICK_SIZE);
-   double pointSize = SymbolInfoDouble(InpCustomSymbol, SYMBOL_POINT);
+   // Revalidate after history import as a final guard against symbol metadata drift.
+   invariantDetails = "";
+   if(!ValidateSymbolInvariants(invariantDetails))
+   {
+      string invariantError = "IMPORT_FAILED post_import_symbol_invariant_error " + invariantDetails;
+      Print(invariantError);
+      WriteResult(invariantError);
+      TerminalClose(6);
+      return INIT_FAILED;
+   }
 
    Print(
       "IMPORT_CUSTOM_RATES_DONE count=", count,
@@ -173,9 +217,7 @@ int OnInit()
       " replaceError=", replaceError,
       " updated=", updated,
       " updateError=", updateError,
-      " calcMode=", calcMode,
-      " point=", DoubleToString(pointSize, InpDigits),
-      " tickSize=", DoubleToString(tickSize, InpDigits),
+      " ", invariantDetails,
       " skippedNonIncreasing=", nonIncreasingRows
    );
 
@@ -184,9 +226,7 @@ int OnInit()
       " bars=" + IntegerToString(count) +
       " from=" + TimeToString(fromTime) +
       " to=" + TimeToString(toTime) +
-      " calc_mode=" + IntegerToString((int)calcMode) +
-      " point=" + DoubleToString(pointSize, InpDigits) +
-      " tick_size=" + DoubleToString(tickSize, InpDigits) +
+      " invariants=PASS " + invariantDetails +
       " skipped_non_increasing=" + IntegerToString(nonIncreasingRows);
 
    WriteResult(result);
