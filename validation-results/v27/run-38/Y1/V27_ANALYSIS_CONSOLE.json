@@ -1,0 +1,39 @@
+{
+  "strategy": "XAUUSD_V27_Clean_MultiSetup",
+  "verdict": "DATA_QUALITY_UNKNOWN",
+  "reasons": [
+    "download_diagnostics.json missing"
+  ],
+  "deposit": 15000.0,
+  "final_balance_reported": null,
+  "final_balance_reconstructed": 15000.0,
+  "unique_deals": 0,
+  "overall": {
+    "trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "win_rate": null,
+    "gross_profit": 0.0,
+    "gross_loss": 0.0,
+    "profit_factor": null,
+    "net_profit": 0.0,
+    "expectancy": null,
+    "average_win": null,
+    "average_loss": null,
+    "max_drawdown_money": 0.0,
+    "max_drawdown_pct": 0.0
+  },
+  "by_direction": {},
+  "by_setup": {},
+  "execution_errors_unique": {
+    "no_money": 0,
+    "invalid_price": 0,
+    "invalid_stops": 0,
+    "failed_order": 0,
+    "failed_modify": 0
+  },
+  "data_quality": {
+    "available": false
+  },
+  "files_scanned": 2
+}
