@@ -1,0 +1,10 @@
+V27 runtime patch requirement:
+- apply explicit market order price
+- remove unprotected retry without SL/TP
+- raise setup quality threshold to 78
+- raise score gap to 8
+- cap spread fraction at 0.08
+- enforce stronger ADX, volume and body filters
+- improve reward/risk by setup
+
+This note does not affect validation by itself.
