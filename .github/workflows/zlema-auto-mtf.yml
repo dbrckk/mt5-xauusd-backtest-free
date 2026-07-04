@@ -1,0 +1,70 @@
+name: ZLEMA AUTO MTF
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'MQL5/Experts/XAUUSD_V27_Clean_MultiSetup.mq5'
+      - '.github/workflows/zlema-auto-mtf.yml'
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 420
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        period: [M15,M30,H1,H2]
+        chunk: [Y1,Y2,Y3]
+        include:
+          - chunk: Y1
+            from_date: '2023.06.21'
+            to_date: '2024.06.21'
+          - chunk: Y2
+            from_date: '2024.06.21'
+            to_date: '2025.06.21'
+          - chunk: Y3
+            from_date: '2025.06.21'
+            to_date: '2026.06.21'
+    env:
+      BT_SYMBOL: XAU_PUBLIC
+      BT_PERIOD: ${{ matrix.period }}
+      BT_FROM_DATE: ${{ matrix.from_date }}
+      BT_TO_DATE: ${{ matrix.to_date }}
+      BT_DEPOSIT: '15000'
+      BT_LEVERAGE: '1:100'
+      BT_MODEL: '0'
+      BT_TIMEOUT_MINUTES: '350'
+      PUBLIC_FETCH_TIMEOUT_SECONDS: '25'
+      PUBLIC_FETCH_RETRIES: '4'
+      PUBLIC_FETCH_RETRY_ROUNDS: '3'
+      PUBLIC_FETCH_WORKERS: '16'
+      PUBLIC_MAX_DOWNLOAD_SECONDS: '10800'
+      PUBLIC_MAX_HISTORY_DAYS: '370'
+      PUBLIC_MIN_REQUIRED_BARS: '250000'
+      PUBLIC_MIN_REQUIRED_DAYS_WITH_TICKS: '220'
+      PUBLIC_MIN_HOUR_SUCCESS_RATIO: '0.90'
+      PUBLIC_SESSION_HOURS: '0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23'
+      PUBLIC_CACHE_DIR: '.cache/dukascopy'
+      MT5_LOGIN: ${{ secrets.MT5_LOGIN }}
+      MT5_PASSWORD: ${{ secrets.MT5_SECRET }}
+      MT5_SERVER: ${{ secrets.MT5_SERVER }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: .cache/dukascopy
+          key: zlema-${{ matrix.period }}-${{ matrix.chunk }}-v1
+      - shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-ea-v27-public-backtest.ps1
+      - if: always()
+        shell: pwsh
+        run: python scripts/analyze-v27-results.py reports --deposit $env:BT_DEPOSIT | Tee-Object -FilePath reports/V27_ANALYSIS_CONSOLE.json
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZLEMA-${{ matrix.period }}-${{ matrix.chunk }}-${{ github.run_number }}
+          path: reports/**
+          retention-days: 14
