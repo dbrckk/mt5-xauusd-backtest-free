@@ -1,0 +1,11 @@
+strategy=XAUUSD_V27_Clean_MultiSetup
+forced_trades=false
+arbitrary_daily_close=false
+natural_setups=BREAKOUT,PULLBACK,CONTINUATION,SWEEP
+symbol=XAU_PUBLIC
+period=M15
+from_date=2024.06.21
+to_date=2025.06.21
+deposit=15000
+leverage=1:100
+model=0
