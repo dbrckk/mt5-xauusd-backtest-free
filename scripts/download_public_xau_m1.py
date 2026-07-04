@@ -43,7 +43,7 @@ def float_env(name: str, default: float, minimum: float | None = None, maximum: 
 
 
 def hours_env() -> list[int]:
-    raw = os.environ.get("PUBLIC_SESSION_HOURS", "7,8,9,10,11,12,13,14,15,16,17,18,19,20")
+    raw = os.environ.get("PUBLIC_SESSION_HOURS", "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23")
     hours: list[int] = []
     for part in raw.split(","):
         try:
@@ -52,24 +52,24 @@ def hours_env() -> list[int]:
             continue
         if 0 <= hour <= 23 and hour not in hours:
             hours.append(hour)
-    return hours or list(range(7, 21))
+    return hours or list(range(24))
 
 
 SESSION_HOURS = hours_env()
 FETCH_TIMEOUT_SECONDS = int_env("PUBLIC_FETCH_TIMEOUT_SECONDS", 25, 5, 180)
 FETCH_RETRIES = int_env("PUBLIC_FETCH_RETRIES", 4, 1, 12)
 FETCH_RETRY_ROUNDS = int_env("PUBLIC_FETCH_RETRY_ROUNDS", 3, 1, 8)
-FETCH_WORKERS = int_env("PUBLIC_FETCH_WORKERS", 24, 1, 32)
+FETCH_WORKERS = int_env("PUBLIC_FETCH_WORKERS", 16, 1, 32)
 MAX_DAYS = int_env("PUBLIC_MAX_HISTORY_DAYS", 370, 1, 400)
 MAX_DOWNLOAD_SECONDS = int_env("PUBLIC_MAX_DOWNLOAD_SECONDS", 10800, 60)
-MIN_REQUIRED_BARS = int_env("PUBLIC_MIN_REQUIRED_BARS", 150000, 1)
+MIN_REQUIRED_BARS = int_env("PUBLIC_MIN_REQUIRED_BARS", 250000, 1)
 MIN_REQUIRED_DAYS_WITH_TICKS = int_env("PUBLIC_MIN_REQUIRED_DAYS_WITH_TICKS", 220, 1)
 MIN_HOUR_SUCCESS_RATIO = float_env("PUBLIC_MIN_HOUR_SUCCESS_RATIO", 0.90, 0.0, 1.0)
 CACHE_DIR = os.environ.get("PUBLIC_CACHE_DIR", "").strip()
 
 failed_downloads: list[str] = []
 missing_downloads: list[str] = []
-status_counts: Counter = Counter()
+fetch_attempt_status_counts: Counter = Counter()
 
 
 def parse_ymd(value: str) -> dt.date:
@@ -112,7 +112,7 @@ def fetch_hour(day: dt.date, hour: int) -> tuple[dt.date, int, bytes | None, str
             req = urllib.request.Request(
                 url,
                 headers={
-                    "User-Agent": "Mozilla/5.0 GitHubActions-XAU-Public-Backtest/3.0",
+                    "User-Agent": "Mozilla/5.0 GitHubActions-XAU-Public-Backtest/4.0",
                     "Accept": "*/*",
                     "Connection": "close",
                 },
@@ -149,53 +149,66 @@ def decompress_bi5(data: bytes) -> bytes | None:
             return None
 
 
-def update_bar(bars: dict[str, list], minute: dt.datetime, price: float, spread_points: int) -> None:
+def update_bar(bars: dict[str, list], minute: dt.datetime, bid_price: float, spread_points: int) -> None:
     key = minute.strftime("%Y.%m.%d %H:%M")
     spread_points = max(1, min(MAX_PUBLIC_SPREAD_POINTS, int(spread_points)))
+
+    # The custom symbol is SYMBOL_CHART_MODE_BID. Therefore the OHLC series
+    # must be built from bid prices, not midpoint prices. Spread is stored as
+    # the per-minute average so MT5 reconstructs the ask side more faithfully.
     if key not in bars:
-        bars[key] = [price, price, price, price, 0, spread_points, 0]
+        bars[key] = [bid_price, bid_price, bid_price, bid_price, 0, 0, 0]
+
     bar = bars[key]
-    bar[1] = max(bar[1], price)
-    bar[2] = min(bar[2], price)
-    bar[3] = price
+    bar[1] = max(bar[1], bid_price)
+    bar[2] = min(bar[2], bid_price)
+    bar[3] = bid_price
     bar[4] += 1
-    bar[5] = min(bar[5], spread_points)
+    bar[5] += spread_points
 
 
-def process_hour(day: dt.date, hour: int, raw: bytes, bars: dict[str, list]) -> int:
+def process_hour(day: dt.date, hour: int, raw: bytes, bars: dict[str, list]) -> tuple[str, int]:
     data = decompress_bi5(raw)
-    if not data or len(data) < 20:
-        return 0
+    if data is None:
+        return "corrupt", 0
+    if len(data) < 20:
+        return "empty_market", 0
 
     base_time = dt.datetime(day.year, day.month, day.day, hour, tzinfo=dt.timezone.utc)
     tick_count = 0
+
     for offset in range(0, len(data) - 19, 20):
         try:
             ms, ask_i, bid_i, _ask_vol, _bid_vol = struct.unpack(">IIIff", data[offset:offset + 20])
         except Exception:
             continue
+
         ask = ask_i / SCALE
         bid = bid_i / SCALE
         if ask <= 0 or bid <= 0 or ask < bid:
             continue
-        price = (ask + bid) / 2.0
+
         spread_points = max(1, int(round((ask - bid) * SCALE)))
         tick_time = base_time + dt.timedelta(milliseconds=ms)
         minute = tick_time.replace(second=0, microsecond=0, tzinfo=None)
-        update_bar(bars, minute, price, spread_points)
+        update_bar(bars, minute, bid, spread_points)
         tick_count += 1
-    return tick_count
+
+    if tick_count == 0:
+        return "empty_market", 0
+    return "ok", tick_count
 
 
 def fetch_and_process_slots(
     slots: list[tuple[dt.date, int]],
     deadline: float,
     bars: dict[str, list],
-) -> tuple[int, int, int, int, set[dt.date]]:
+) -> tuple[int, int, int, int, int, set[dt.date]]:
     pending = list(slots)
     total_ticks = 0
     successful_hours = 0
     failed_hours = 0
+    empty_market_hours = 0
     missing_404 = 0
     days_with_ticks: set[dt.date] = set()
 
@@ -211,25 +224,26 @@ def fetch_and_process_slots(
             for future in as_completed(future_map):
                 day, hour = future_map[future]
                 try:
-                    d, h, raw, status, url = future.result()
+                    d, h, raw, fetch_status, url = future.result()
                 except Exception as exc:
                     d, h = day, hour
-                    raw, status, url = None, f"failed:{exc}", hour_url(day, hour)
+                    raw, fetch_status, url = None, f"failed:{exc}", hour_url(day, hour)
 
-                status_key = status.split(":", 1)[0]
-                status_counts[status_key] += 1
+                fetch_attempt_status_counts[fetch_status.split(":", 1)[0]] += 1
 
                 if raw is not None:
-                    ticks = process_hour(d, h, raw, bars)
-                    if ticks > 0:
+                    payload_status, ticks = process_hour(d, h, raw, bars)
+                    if payload_status == "ok":
                         total_ticks += ticks
                         successful_hours += 1
                         days_with_ticks.add(d)
+                    elif payload_status == "empty_market":
+                        empty_market_hours += 1
                     else:
                         retry.append((d, h))
                     continue
 
-                if status == "missing_404":
+                if fetch_status == "missing_404":
                     missing_404 += 1
                     missing_downloads.append(url)
                     continue
@@ -243,7 +257,7 @@ def fetch_and_process_slots(
         url = hour_url(day, hour)
         failed_downloads.append(f"{url} | retry_rounds_exhausted")
 
-    return total_ticks, successful_hours, failed_hours, missing_404, days_with_ticks
+    return total_ticks, successful_hours, failed_hours, empty_market_hours, missing_404, days_with_ticks
 
 
 def write_csv(out_csv: str, bars: dict[str, list]) -> tuple[int, str]:
@@ -258,7 +272,8 @@ def write_csv(out_csv: str, bars: dict[str, list]) -> tuple[int, str]:
         hasher.update((",".join(header) + "\n").encode())
 
         for timestamp, row in ordered.items():
-            o, h, l, c, tick_volume, spread, real_volume = row
+            o, h, l, c, tick_volume, spread_sum, real_volume = row
+            average_spread = max(1, int(round(spread_sum / tick_volume))) if tick_volume > 0 else 1
             values = [
                 timestamp,
                 f"{o:.3f}",
@@ -266,7 +281,7 @@ def write_csv(out_csv: str, bars: dict[str, list]) -> tuple[int, str]:
                 f"{l:.3f}",
                 f"{c:.3f}",
                 str(int(tick_volume)),
-                str(int(spread)),
+                str(average_spread),
                 str(int(real_volume)),
             ]
             writer.writerow(values)
@@ -291,13 +306,19 @@ def main() -> int:
     slots = [(day, hour) for day in days for hour in SESSION_HOURS]
     deadline = time.time() + MAX_DOWNLOAD_SECONDS
     bars: dict[str, list] = {}
-    total_ticks, successful_hours, failed_hours, missing_404, days_with_ticks = fetch_and_process_slots(
-        slots,
-        deadline,
-        bars,
-    )
+
+    (
+        total_ticks,
+        successful_hours,
+        failed_hours,
+        empty_market_hours,
+        missing_404,
+        days_with_ticks,
+    ) = fetch_and_process_slots(slots, deadline, bars)
 
     bars_count, dataset_sha256 = write_csv(out_csv, bars)
+
+    # Valid market-closed/maintenance payloads are not download failures.
     denominator = successful_hours + failed_hours
     hour_success_ratio = successful_hours / denominator if denominator else 0.0
 
@@ -310,15 +331,18 @@ def main() -> int:
     diagnostics = {
         "bars": bars_count,
         "ticks": total_ticks,
+        "price_basis": "bid",
+        "spread_basis": "average_per_minute",
         "days_with_ticks": len(days_with_ticks),
         "market_days_requested": len(days),
         "successful_hours": successful_hours,
         "failed_hours": failed_hours,
+        "empty_market_hours": empty_market_hours,
         "missing_404_hours": missing_404,
         "hour_success_ratio": round(hour_success_ratio, 6),
         "min_required_hour_success_ratio": MIN_HOUR_SUCCESS_RATIO,
         "failed_count": len(failed_downloads),
-        "status_counts": dict(status_counts),
+        "fetch_attempt_status_counts": dict(fetch_attempt_status_counts),
         "fetch_timeout_seconds": FETCH_TIMEOUT_SECONDS,
         "fetch_retries": FETCH_RETRIES,
         "fetch_retry_rounds": FETCH_RETRY_ROUNDS,
@@ -330,6 +354,7 @@ def main() -> int:
         "range_requested": f"{start.isoformat()}..{requested_end.isoformat()}",
         "range_downloaded": f"{start.isoformat()}..{end.isoformat()}",
     }
+
     (out_dir / "download_diagnostics.json").write_text(
         __import__("json").dumps(diagnostics, indent=2, ensure_ascii=False),
         encoding="utf-8",
@@ -343,8 +368,11 @@ def main() -> int:
     print(f"PUBLIC_HISTORY_DAYS_WITH_TICKS={len(days_with_ticks)}")
     print(f"PUBLIC_HISTORY_SUCCESSFUL_HOURS={successful_hours}")
     print(f"PUBLIC_HISTORY_FAILED_HOURS={failed_hours}")
+    print(f"PUBLIC_HISTORY_EMPTY_MARKET_HOURS={empty_market_hours}")
     print(f"PUBLIC_HISTORY_MISSING_404={missing_404}")
     print(f"PUBLIC_HISTORY_HOUR_SUCCESS_RATIO={hour_success_ratio:.6f}")
+    print("PUBLIC_HISTORY_PRICE_BASIS=bid")
+    print("PUBLIC_HISTORY_SPREAD_BASIS=average_per_minute")
     print("PUBLIC_HISTORY_SYNTHETIC_FILL_BARS=0")
     print(f"PUBLIC_HISTORY_DATASET_SHA256={dataset_sha256}")
 
