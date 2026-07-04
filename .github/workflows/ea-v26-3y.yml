@@ -110,9 +110,52 @@ jobs:
             dukascopy-xau-v27-${{ matrix.chunk }}-
             dukascopy-xau-v27-
 
+      - name: Capture committed source digests
+        shell: pwsh
+        run: |
+          $paths = @(
+            "MQL5/Experts/XAUUSD_V27_Clean_MultiSetup.mq5",
+            "MQL5/Experts/ImportCustomRatesEA.mq5",
+            "scripts/run-ea-v27-public-backtest.ps1",
+            "scripts/download_public_xau_m1.py",
+            "scripts/analyze-v27-results.py"
+          )
+          $digests = [ordered]@{}
+          foreach ($path in $paths) {
+            if (!(Test-Path $path)) { throw "Missing committed source: $path" }
+            $digests[$path] = (Get-FileHash -Algorithm SHA256 -Path $path).Hash
+          }
+          $digestPath = Join-Path $env:RUNNER_TEMP "v27-source-digests.json"
+          $digests | ConvertTo-Json | Set-Content -Path $digestPath -Encoding UTF8
+          $digests.GetEnumerator() | ForEach-Object { "SOURCE_SHA256 $($_.Key)=$($_.Value)" }
+
       - name: Run committed V27 MT5 backtest
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-ea-v27-public-backtest.ps1
+
+      - name: Verify source immutability
+        if: always()
+        shell: pwsh
+        run: |
+          $digestPath = Join-Path $env:RUNNER_TEMP "v27-source-digests.json"
+          if (!(Test-Path $digestPath)) { throw "Initial source digest file is missing." }
+          $expected = Get-Content $digestPath -Raw | ConvertFrom-Json
+          $mutated = @()
+          foreach ($property in $expected.PSObject.Properties) {
+            $path = $property.Name
+            if (!(Test-Path $path)) {
+              $mutated += "$path (deleted)"
+              continue
+            }
+            $actual = (Get-FileHash -Algorithm SHA256 -Path $path).Hash
+            if ($actual -ne [string]$property.Value) {
+              $mutated += "$path ($($property.Value) -> $actual)"
+            }
+          }
+          if ($mutated.Count -gt 0) {
+            throw "V27 validation source mutation detected: $($mutated -join '; ')"
+          }
+          "V27_SOURCE_IMMUTABILITY=PASS"
 
       - name: Analyze V27 results
         if: always()
