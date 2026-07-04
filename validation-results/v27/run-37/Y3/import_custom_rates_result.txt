@@ -1,0 +1,1 @@
+IMPORT_OK symbol=XAU_PUBLIC bars=347873 from=2025.06.23 00:00 to=2026.06.19 16:58 calc_mode=4 skipped_non_increasing=0
