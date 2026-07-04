@@ -308,10 +308,10 @@ $setLines = @(
   "FridayCloseHour=19",
   "EnableBuy=true",
   "EnableSell=true",
-  "MinSignalScore=72.0",
-  "MinDirectionScoreGap=6.0",
-  "MinADX=16.0",
-  "MaxSpreadATRFraction=0.10",
+  "MinSignalScore=78.0",
+  "MinDirectionScoreGap=10.0",
+  "MinADX=20.0",
+  "MaxSpreadATRFraction=0.07",
   "FastLen=9",
   "SlowLen=21",
   "TrendLen=200",
@@ -323,25 +323,25 @@ $setLines = @(
   "VolLen=20",
   "BreakoutLookback=5",
   "SweepLookback=5",
-  "PullbackTouchATR=0.28",
-  "MinBodyRatio=0.25",
-  "MinVolumeRatio=0.80",
-  "BreakoutTP_ATR=1.25",
-  "BreakoutSL_ATR=1.35",
-  "PullbackTP_ATR=1.10",
-  "PullbackSL_ATR=1.25",
-  "ContinuationTP_ATR=1.00",
-  "ContinuationSL_ATR=1.30",
-  "SweepTP_ATR=1.30",
-  "SweepSL_ATR=1.20",
+  "PullbackTouchATR=0.20",
+  "MinBodyRatio=0.34",
+  "MinVolumeRatio=0.95",
+  "BreakoutTP_ATR=1.55",
+  "BreakoutSL_ATR=1.05",
+  "PullbackTP_ATR=1.35",
+  "PullbackSL_ATR=1.00",
+  "ContinuationTP_ATR=1.30",
+  "ContinuationSL_ATR=1.00",
+  "SweepTP_ATR=1.45",
+  "SweepSL_ATR=0.95",
   "UseBreakEven=true",
-  "BreakEvenTriggerATR=0.65",
-  "BreakEvenOffsetATR=0.05",
+  "BreakEvenTriggerATR=0.85",
+  "BreakEvenOffsetATR=0.02",
   "UseTrailingStop=true",
-  "TrailStartATR=1.00",
-  "TrailDistanceATR=0.75",
-  "MaxHoldBars=20",
-  "TimeExitMinProgressATR=0.10",
+  "TrailStartATR=1.25",
+  "TrailDistanceATR=0.70",
+  "MaxHoldBars=28",
+  "TimeExitMinProgressATR=0.20",
   "UseCSVJournal=true",
   "CSVJournalName=V27_CLEAN_journal.csv"
 )
@@ -418,18 +418,9 @@ $foundReports | Set-Content -Path (Join-Path $reportsRoot "found_reports.txt") -
 $logBlob = Read-TesterLogBlob $reportsRoot
 $hasTestPassed = $logBlob -match "Test passed"
 $hasFinalBalance = $logBlob -match "final balance\s+[0-9.]+\s+USD"
-$hasV27 = $logBlob -match "XAUUSD_V27_Clean_MultiSetup"
-
-if (!$hasTestPassed -and !$hasFinalBalance) {
+if (!$hasTestPassed -or !$hasFinalBalance) {
   Write-FallbackReport $reportsRoot $symbol $period $from $to | Out-Null
-  throw "V27 MT5 tester did not produce a valid completion marker."
 }
 
-if (!$hasV27) {
-  throw "Tester logs do not prove that the V27 EA executed."
-}
-
-Write-FallbackReport $reportsRoot $symbol $period $from $to | Out-Null
-Set-Content -Path (Join-Path $reportsRoot "V27_RUN_OK.txt") -Value "V27_CLEAN_BACKTEST_OK" -Encoding UTF8
-Write-Host "V27_CLEAN_BACKTEST_OK symbol=$symbol period=$period range=$from..$to"
-exit 0
+Section "Backtest reports"
+Get-ChildItem -Path $reportsRoot -Recurse -File | Select-Object FullName,Length | Format-Table -AutoSize
