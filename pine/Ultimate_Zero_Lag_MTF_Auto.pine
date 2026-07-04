@@ -1,0 +1,52 @@
+//@version=6
+indicator("Ultimate Zero-Lag MTF Fully Automated",shorttitle="ZLEMA-AUTO",overlay=true,dynamic_requests=true)
+grp_auto="Moteur Adaptation Dynamique"
+use_auto=input.bool(true,title="Ajustement 100% automatique",group=grp_auto)
+grp_man="Parametres manuels"
+man_fast=input.int(12,title="ZLEMA rapide",minval=1,group=grp_man)
+man_slow=input.int(26,title="ZLEMA lente",minval=1,group=grp_man)
+man_atr=input.float(0.8,title="Multiplicateur ATR",step=0.1,group=grp_man)
+man_htf=input.timeframe("60",title="Timeframe HTF",group=grp_man)
+src=input.source(close,title="Source du prix")
+atr_len=input.int(14,title="Longueur ATR")
+auto_fast=timeframe.isintraday?(timeframe.multiplier<=3?8:timeframe.multiplier<=15?10:timeframe.multiplier<=60?12:15):20
+auto_slow=timeframe.isintraday?(timeframe.multiplier<=3?21:timeframe.multiplier<=15?24:timeframe.multiplier<=60?26:35):50
+auto_atr=timeframe.isintraday?(timeframe.multiplier<=3?0.6:timeframe.multiplier<=15?0.7:timeframe.multiplier<=60?0.8:0.9):1.0
+auto_htf=timeframe.isintraday?(timeframe.multiplier<=3?"15":timeframe.multiplier<=15?"60":timeframe.multiplier<=60?"240":"D"):timeframe.isdaily?"W":"M"
+fast_len=use_auto?auto_fast:man_fast
+slow_len=use_auto?auto_slow:man_slow
+atr_mult=use_auto?auto_atr:man_atr
+htf=use_auto?auto_htf:man_htf
+fast_lag=int(math.floor((fast_len-1)/2.0))
+slow_lag=int(math.floor((slow_len-1)/2.0))
+fast_data=src+(src-src[fast_lag])
+slow_data=src+(src-src[slow_lag])
+zlema_fast=ta.ema(fast_data,fast_len)
+zlema_slow=ta.ema(slow_data,slow_len)
+bull_cross=ta.crossover(zlema_fast,zlema_slow)
+bear_cross=ta.crossunder(zlema_fast,zlema_slow)
+atr_val=ta.atr(atr_len)
+ma_atr=ta.sma(atr_val,20)
+vol_ok=atr_val>ma_atr*atr_mult
+htf_fast=request.security(syminfo.tickerid,htf,ta.ema(close+(close-close[fast_lag]),fast_len)[1],gaps=barmerge.gaps_off,lookahead=barmerge.lookahead_on)
+htf_slow=request.security(syminfo.tickerid,htf,ta.ema(close+(close-close[slow_lag]),slow_len)[1],gaps=barmerge.gaps_off,lookahead=barmerge.lookahead_on)
+htf_trend=htf_fast>htf_slow?1:-1
+buy_signal=bull_cross and htf_trend==1 and vol_ok
+sell_signal=bear_cross and htf_trend==-1 and vol_ok
+p_fast=plot(zlema_fast,title="Fast ZLEMA",color=color.aqua,linewidth=2)
+p_slow=plot(zlema_slow,title="Slow ZLEMA",color=color.orange,linewidth=2)
+fill(p_fast,p_slow,color=zlema_fast>zlema_slow?color.new(color.green,85):color.new(color.red,85),title="Trend Cloud")
+plotshape(buy_signal,title="Signal BUY",style=shape.triangleup,location=location.belowbar,color=color.green,size=size.small,text="BUY",textcolor=color.white)
+plotshape(sell_signal,title="Signal SELL",style=shape.triangledown,location=location.abovebar,color=color.red,size=size.small,text="SELL",textcolor=color.white)
+barcolor(zlema_fast>zlema_slow?color.new(color.green,30):color.new(color.red,30))
+var table dash=table.new(position.top_right,2,4,bgcolor=color.new(color.black,15),border_width=1,border_color=color.gray)
+table.cell(dash,0,0,"Mode",text_color=color.white,text_size=size.small)
+table.cell(dash,1,0,use_auto?"AUTO":"MANUEL",text_color=use_auto?color.green:color.orange,text_size=size.small)
+table.cell(dash,0,1,"Parametres",text_color=color.white,text_size=size.small)
+table.cell(dash,1,1,str.tostring(fast_len)+"/"+str.tostring(slow_len)+" ATR x"+str.tostring(atr_mult),text_color=color.aqua,text_size=size.small)
+table.cell(dash,0,2,"Tendance HTF "+htf,text_color=color.white,text_size=size.small)
+table.cell(dash,1,2,htf_trend==1?"BULLISH":"BEARISH",text_color=color.white,text_size=size.small,bgcolor=htf_trend==1?color.new(color.green,50):color.new(color.red,50))
+table.cell(dash,0,3,"Volatilite",text_color=color.white,text_size=size.small)
+table.cell(dash,1,3,vol_ok?"OPTIMALE":"RANGE",text_color=color.white,text_size=size.small,bgcolor=vol_ok?color.new(color.teal,50):color.new(color.gray,60))
+alertcondition(buy_signal,title="Alerte BUY Auto ZLEMA",message="Signal BUY confirme sur {{ticker}} TF {{interval}}")
+alertcondition(sell_signal,title="Alerte SELL Auto ZLEMA",message="Signal SELL confirme sur {{ticker}} TF {{interval}}")
