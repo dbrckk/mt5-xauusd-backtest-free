@@ -24,6 +24,7 @@ on:
     branches:
       - main
       - v28-contextual-risk
+      - autonomous-demo-research
     paths:
       - ".github/workflows/ea-v26-3y.yml"
       - "MQL5/Experts/XAUUSD_V27_Clean_MultiSetup.mq5"
