@@ -271,6 +271,49 @@ def group_stats(trades: list[dict], field: str, deposit: float) -> dict:
     return {key: stats_for(value, deposit) for key, value in sorted(grouped.items())}
 
 
+def period_key(dt: datetime, months: int) -> str:
+    bucket_start_month = ((dt.month - 1) // months) * months + 1
+    bucket_end_month = bucket_start_month + months - 1
+    return f"{dt.year:04d}-{bucket_start_month:02d}..{dt.year:04d}-{bucket_end_month:02d}"
+
+
+def rolling_period_stats(trades: list[dict], months: int, deposit: float) -> dict:
+    grouped = defaultdict(list)
+    for trade in trades:
+        grouped[period_key(trade["entry_time"], months)].append(trade)
+    rows = {key: stats_for(value, deposit) for key, value in sorted(grouped.items())}
+    pf_values = [row["profit_factor"] for row in rows.values() if row.get("profit_factor") is not None]
+    net_values = [row["net_profit"] for row in rows.values()]
+    return {
+        "bucket_months": months,
+        "buckets": rows,
+        "bucket_count": len(rows),
+        "negative_net_buckets": sum(1 for value in net_values if value < 0),
+        "pf_below_0_95_buckets": sum(1 for value in pf_values if value < 0.95),
+        "min_profit_factor": round(min(pf_values), 4) if pf_values else None,
+        "median_profit_factor": round(sorted(pf_values)[len(pf_values) // 2], 4) if pf_values else None,
+        "min_net_profit": round(min(net_values), 2) if net_values else None,
+        "max_net_profit": round(max(net_values), 2) if net_values else None,
+    }
+
+
+def route_robustness(trades: list[dict], deposit: float) -> dict:
+    grouped = defaultdict(list)
+    for trade in trades:
+        grouped[str(trade.get("route", "UNKNOWN"))].append(trade)
+    result = {}
+    for route, route_trades in sorted(grouped.items()):
+        quarters = rolling_period_stats(route_trades, 3, deposit)
+        halves = rolling_period_stats(route_trades, 6, deposit)
+        overall = stats_for(route_trades, deposit)
+        result[route] = {
+            "overall": overall,
+            "quarter_summary": {key: value for key, value in quarters.items() if key != "buckets"},
+            "half_year_summary": {key: value for key, value in halves.items() if key != "buckets"},
+        }
+    return result
+
+
 def unique_error_lines(blob: str) -> dict:
     categories = {
         "no_money": re.compile(r"No money", re.IGNORECASE),
@@ -385,6 +428,9 @@ def main() -> int:
         "by_exit_reason": group_stats(trades, "exit_reason", args.deposit),
         "by_entry_hour": group_stats(trades, "entry_hour", args.deposit),
         "by_entry_day_of_week": group_stats(trades, "entry_day_of_week", args.deposit),
+        "rolling_by_quarter": rolling_period_stats(trades, 3, args.deposit),
+        "rolling_by_half_year": rolling_period_stats(trades, 6, args.deposit),
+        "route_robustness": route_robustness(trades, args.deposit),
         "execution_errors_unique": errors,
         "data_quality": data_quality,
         "files_scanned": len(texts),
