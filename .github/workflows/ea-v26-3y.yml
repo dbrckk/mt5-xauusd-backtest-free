@@ -1,5 +1,5 @@
-name: EA V28 CONTEXTUAL RISK 3Y BACKTEST
-run-name: V28 contextual risk 3Y · ${{ github.ref_name }} · ${{ github.sha }}
+name: EA V28 CONTEXTUAL RISK ROBUSTNESS BACKTEST
+run-name: V28 robustness · ${{ github.ref_name }} · ${{ github.sha }}
 
 on:
   workflow_dispatch:
@@ -58,6 +58,10 @@ jobs:
       max-parallel: 2
       matrix:
         include:
+          - chunk: Y0_OOS
+            period: M15
+            from_date: "2022.06.21"
+            to_date: "2023.06.21"
           - chunk: Y1
             period: M15
             from_date: "2023.06.21"
