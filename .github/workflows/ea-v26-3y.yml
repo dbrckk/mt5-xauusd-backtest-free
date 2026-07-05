@@ -1,4 +1,5 @@
 name: EA V28 CONTEXTUAL RISK 3Y BACKTEST
+run-name: V28 contextual risk 3Y · ${{ github.ref_name }} · ${{ github.sha }}
 
 on:
   workflow_dispatch:
