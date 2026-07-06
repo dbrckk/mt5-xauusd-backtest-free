@@ -18,6 +18,11 @@ FINAL_BALANCE_PATTERNS = [
     re.compile(r"Final balance</td>\s*<td[^>]*>([0-9]+(?:\.[0-9]+)?)\s+USD", re.IGNORECASE),
 ]
 DETAIL_KV_RE = re.compile(r"([A-Za-z_]+)=([^\s,;]+)")
+TARGET_WIN_RATE = 0.70
+TARGET_MONTHLY_RETURN = 0.05
+MIN_OBJECTIVE_TRADES = 60
+MAX_OBJECTIVE_DRAWDOWN_PCT = 10.0
+MIN_OBJECTIVE_PROFIT_FACTOR = 1.25
 
 
 def decode_text(data: bytes) -> str:
@@ -146,21 +151,25 @@ def pair_trades(deals: list[dict]) -> list[dict]:
         if direction == "SELL":
             price_delta = -price_delta
         money = price_delta * 100.0 * open_deal["lot"]
+        entry_time = open_deal["time"]
+        exit_time = deal["time"]
         trades.append(
             {
                 "entry_deal_id": open_deal["id"],
                 "exit_deal_id": deal["id"],
-                "entry_time": open_deal["time"],
-                "exit_time": deal["time"],
+                "entry_time": entry_time,
+                "exit_time": exit_time,
                 "direction": direction,
                 "lot": open_deal["lot"],
                 "entry_price": open_deal["price"],
                 "exit_price": deal["price"],
                 "price_delta": round(price_delta, 5),
                 "profit_money": round(money, 2),
-                "hold_minutes": int((deal["time"] - open_deal["time"]).total_seconds() // 60),
-                "entry_hour": open_deal["time"].hour,
-                "entry_day_of_week": open_deal["time"].strftime("%A").upper(),
+                "hold_minutes": int((exit_time - entry_time).total_seconds() // 60),
+                "entry_hour": entry_time.hour,
+                "entry_day_of_week": entry_time.strftime("%A").upper(),
+                "entry_month": entry_time.strftime("%Y-%m"),
+                "overnight": entry_time.date() != exit_time.date(),
             }
         )
         open_deal = None
@@ -210,10 +219,11 @@ def stats_for(trades: list[dict], deposit: float) -> dict:
         return {
             "trades": 0, "wins": 0, "losses": 0, "win_rate": None,
             "gross_profit": 0.0, "gross_loss": 0.0, "profit_factor": None,
-            "net_profit": 0.0, "expectancy": None, "average_win": None,
-            "average_loss": None, "max_drawdown_money": 0.0, "max_drawdown_pct": 0.0,
-            "average_lot": None, "average_planned_risk": None, "average_actual_risk": None,
-            "average_risk_realization": None, "average_r_multiple": None,
+            "net_profit": 0.0, "return_pct_of_initial": 0.0, "expectancy": None,
+            "average_win": None, "average_loss": None, "max_drawdown_money": 0.0,
+            "max_drawdown_pct": 0.0, "average_lot": None, "average_planned_risk": None,
+            "average_actual_risk": None, "average_risk_realization": None,
+            "average_r_multiple": None, "overnight_trades": 0,
         }
 
     profits = [float(trade["profit_money"]) for trade in trades]
@@ -251,6 +261,7 @@ def stats_for(trades: list[dict], deposit: float) -> dict:
         "profit_factor": None if math.isinf(profit_factor) else round(profit_factor, 4),
         "profit_factor_infinite": math.isinf(profit_factor),
         "net_profit": round(net_profit, 2),
+        "return_pct_of_initial": round((net_profit / deposit) * 100.0, 4) if deposit > 0 else None,
         "expectancy": round(net_profit / len(trades), 4),
         "average_win": round(sum(wins) / len(wins), 4) if wins else None,
         "average_loss": round(sum(losses) / len(losses), 4) if losses else None,
@@ -261,6 +272,7 @@ def stats_for(trades: list[dict], deposit: float) -> dict:
         "average_actual_risk": avg("actual_risk"),
         "average_risk_realization": avg("risk_realization"),
         "average_r_multiple": avg("r_multiple"),
+        "overnight_trades": sum(1 for trade in trades if trade.get("overnight")),
     }
 
 
@@ -294,6 +306,29 @@ def rolling_period_stats(trades: list[dict], months: int, deposit: float) -> dic
         "median_profit_factor": round(sorted(pf_values)[len(pf_values) // 2], 4) if pf_values else None,
         "min_net_profit": round(min(net_values), 2) if net_values else None,
         "max_net_profit": round(max(net_values), 2) if net_values else None,
+    }
+
+
+def monthly_objective_stats(trades: list[dict], deposit: float) -> dict:
+    grouped = defaultdict(list)
+    for trade in trades:
+        grouped[trade["entry_month"]].append(trade)
+    rows = {key: stats_for(value, deposit) for key, value in sorted(grouped.items())}
+    net_values = [row["net_profit"] for row in rows.values()]
+    target_money = round(deposit * TARGET_MONTHLY_RETURN, 2)
+    monthly_passes = [value >= target_money for value in net_values]
+    return {
+        "target_monthly_return_pct_of_initial": round(TARGET_MONTHLY_RETURN * 100.0, 4),
+        "target_monthly_net_profit": target_money,
+        "active_months": len(rows),
+        "months": rows,
+        "average_monthly_net_profit": round(sum(net_values) / len(net_values), 2) if net_values else None,
+        "average_monthly_return_pct_of_initial": round((sum(net_values) / len(net_values) / deposit) * 100.0, 4) if net_values and deposit > 0 else None,
+        "months_meeting_target": sum(1 for passed in monthly_passes if passed),
+        "months_below_target": sum(1 for passed in monthly_passes if not passed),
+        "negative_months": sum(1 for value in net_values if value < 0),
+        "min_monthly_net_profit": round(min(net_values), 2) if net_values else None,
+        "max_monthly_net_profit": round(max(net_values), 2) if net_values else None,
     }
 
 
@@ -346,7 +381,7 @@ def load_data_quality(root: Path) -> dict:
         return {"available": False}
 
 
-def classify(overall: dict, errors: dict, quality: dict) -> tuple[str, list[str]]:
+def classify(overall: dict, errors: dict, quality: dict, monthly: dict) -> tuple[str, list[str]]:
     reasons: list[str] = []
     if not quality.get("available"):
         return "DATA_QUALITY_UNKNOWN", ["download_diagnostics.json missing"]
@@ -360,20 +395,36 @@ def classify(overall: dict, errors: dict, quality: dict) -> tuple[str, list[str]
         return "EXECUTION_FAIL", [f"{errors['no_money']} unique no-money rejection(s)"]
 
     trades = overall["trades"]
-    if trades < 60:
-        return "INSUFFICIENT_SAMPLE", [f"only {trades} closed trades"]
     pf = overall.get("profit_factor")
     wr = overall.get("win_rate")
-    net = overall.get("net_profit", 0.0)
     dd = overall.get("max_drawdown_pct", 100.0)
-    if net > 0 and pf is not None and pf >= 1.25 and wr is not None and wr >= 0.52 and dd <= 10.0 and trades >= 120:
-        reasons.append("positive edge threshold met")
-        return "CLEAN_PASS", reasons
-    if net > 0 and pf is not None and pf >= 1.10 and wr is not None and wr >= 0.48:
-        reasons.append("positive result, but robustness threshold not fully met")
-        return "PROMISING_RETEST", reasons
-    reasons.append("no validated positive edge on this chunk")
-    return "STRATEGY_REWORK_REQUIRED", reasons
+    avg_monthly = monthly.get("average_monthly_return_pct_of_initial")
+    active_months = int(monthly.get("active_months") or 0)
+    overnight = int(overall.get("overnight_trades") or 0)
+
+    if overnight > 0:
+        return "INTRADAY_RULE_FAIL", [f"{overnight} overnight trade(s) detected"]
+    if trades < MIN_OBJECTIVE_TRADES:
+        return "INSUFFICIENT_SAMPLE", [f"only {trades} closed trades; minimum {MIN_OBJECTIVE_TRADES} required"]
+
+    objective_failures = []
+    if wr is None or wr < TARGET_WIN_RATE:
+        objective_failures.append(f"win_rate {wr} below target {TARGET_WIN_RATE}")
+    if avg_monthly is None or avg_monthly < TARGET_MONTHLY_RETURN * 100.0:
+        objective_failures.append(f"average monthly return {avg_monthly}% below target {TARGET_MONTHLY_RETURN * 100.0:.2f}%")
+    if pf is None or pf < MIN_OBJECTIVE_PROFIT_FACTOR:
+        objective_failures.append(f"profit factor {pf} below robustness floor {MIN_OBJECTIVE_PROFIT_FACTOR}")
+    if dd > MAX_OBJECTIVE_DRAWDOWN_PCT:
+        objective_failures.append(f"drawdown {dd}% above robustness ceiling {MAX_OBJECTIVE_DRAWDOWN_PCT}%")
+    if active_months < 6:
+        objective_failures.append(f"only {active_months} active month(s); minimum 6 preferred for monthly target validation")
+
+    if not objective_failures:
+        return "OBJECTIVE_VALIDATED", ["70% win-rate, +5% average monthly return, intraday rule, PF and drawdown gates met"]
+
+    if overall.get("net_profit", 0.0) > 0 and pf is not None and pf >= 1.10 and wr is not None and wr >= 0.52:
+        return "PROMISING_RETEST", objective_failures
+    return "STRATEGY_REWORK_REQUIRED", objective_failures
 
 
 def write_trades(root: Path, trades: list[dict]) -> None:
@@ -381,8 +432,8 @@ def write_trades(root: Path, trades: list[dict]) -> None:
     fields = [
         "entry_deal_id", "exit_deal_id", "entry_time", "exit_time", "direction", "setup", "route",
         "exit_reason", "score", "lot", "planned_risk", "actual_risk", "risk_realization", "risk_pct",
-        "r_multiple", "atr", "entry_hour", "entry_day_of_week", "entry_price", "exit_price", "price_delta",
-        "profit_money", "hold_minutes",
+        "r_multiple", "atr", "entry_hour", "entry_day_of_week", "entry_month", "overnight",
+        "entry_price", "exit_price", "price_delta", "profit_money", "hold_minutes",
     ]
     with output.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
@@ -408,20 +459,30 @@ def main() -> int:
     attach_journal_context(trades, journal)
 
     overall = stats_for(trades, args.deposit)
+    monthly = monthly_objective_stats(trades, args.deposit)
     errors = unique_error_lines(blob)
     data_quality = load_data_quality(root)
     final_balance = find_final_balance(blob)
-    verdict, reasons = classify(overall, errors, data_quality)
+    verdict, reasons = classify(overall, errors, data_quality, monthly)
     result = {
         "strategy": "XAUUSD_V28_Contextual_Router",
         "verdict": verdict,
         "reasons": reasons,
+        "objective_targets": {
+            "win_rate_minimum": TARGET_WIN_RATE,
+            "monthly_return_pct_of_initial_minimum": TARGET_MONTHLY_RETURN * 100.0,
+            "strict_intraday_required": True,
+            "minimum_closed_trades": MIN_OBJECTIVE_TRADES,
+            "profit_factor_floor": MIN_OBJECTIVE_PROFIT_FACTOR,
+            "drawdown_pct_ceiling": MAX_OBJECTIVE_DRAWDOWN_PCT,
+        },
         "deposit": args.deposit,
         "final_balance_reported": final_balance,
         "final_balance_reconstructed": round(args.deposit + overall["net_profit"], 2),
         "unique_deals": len(deals),
         "journal_events": len(journal),
         "overall": overall,
+        "monthly_objective": monthly,
         "by_direction": group_stats(trades, "direction", args.deposit),
         "by_setup": group_stats(trades, "setup", args.deposit),
         "by_route": group_stats(trades, "route", args.deposit),
