@@ -1,6 +1,6 @@
 #property strict
-#property version "2.83"
-#property description "V28 Contextual Router: stricter cross-period entry quality and normalized risk"
+#property version "2.84"
+#property description "V28 Contextual Router: balanced cross-period quality gates and normalized risk"
 #include <Trade/Trade.mqh>
 CTrade trade;
 
@@ -12,7 +12,7 @@ input bool UseEquityForRisk=true;
 input double MaxRiskLot=2.00;
 input double MinLotRiskTolerance=1.10;
 input int MaxTradesPerDay=3;
-input int CooldownMinutes=75;
+input int CooldownMinutes=60;
 input ulong MagicNumber=280100;
 input int SlippagePoints=120;
 input int BrokerStopBufferPoints=40;
@@ -25,8 +25,8 @@ input bool CloseBeforeWeekend=true;
 input int FridayCloseHour=19;
 input bool EnableBuy=true;
 input bool EnableSell=true;
-input double MinSignalScore=86.0;
-input double MinDirectionScoreGap=14.0;
+input double MinSignalScore=84.0;
+input double MinDirectionScoreGap=12.0;
 input double MinADX=22.0;
 input double MaxSpreadATRFraction=0.06;
 input int FastLen=9;
@@ -105,7 +105,7 @@ bool Route(string setup,int dir,int hour,string &name){name="";if(setup=="BREAKO
 
 bool RouteQuality(string setup,int dir,double rs,double adx,double vr,double br,int b1,int b4){
  if((dir>0&&b1<=0)||(dir<0&&b1>=0))return false;
- if((dir>0&&b4<=0)||(dir<0&&b4>=0))return false;
+ if((dir>0&&b4<0)||(dir<0&&b4>0))return false;
  if(adx<MinADX||vr<MinVolumeRatio||br<MinBodyRatio)return false;
  if(setup=="PULLBACK"&&dir>0)return rs>51&&rs<66&&vr>=1.05&&br>=0.38;
  if(setup=="SWEEP"&&dir<0)return rs>34&&rs<50&&vr>=1.05&&br>=0.38;
@@ -115,7 +115,7 @@ bool RouteQuality(string setup,int dir,double rs,double adx,double vr,double br,
 }
 
 double BaseScore(bool buy,MqlRates &r[],double f,double s,double trend,double rs,double adx,double atr,double vr,double br,int b1,int b4){
- bool local=buy?(r[1].close>trend&&f>s):(r[1].close<trend&&f<s);if(!local)return -1000;if((buy&&b1<=0)||(!buy&&b1>=0))return -1000;if((buy&&b4<=0)||(!buy&&b4>=0))return -1000;MqlTick t;if(!SymbolInfoTick(Sym,t))return -1000;if(atr<=0||MathMax(0.0,t.ask-t.bid)>atr*MaxSpreadATRFraction)return -1000;
+ bool local=buy?(r[1].close>trend&&f>s):(r[1].close<trend&&f<s);if(!local)return -1000;if((buy&&b1<=0)||(!buy&&b1>=0))return -1000;if((buy&&b4<0)||(!buy&&b4>0))return -1000;MqlTick t;if(!SymbolInfoTick(Sym,t))return -1000;if(atr<=0||MathMax(0.0,t.ask-t.bid)>atr*MaxSpreadATRFraction)return -1000;
  double z=20;z+=20;z+=14;
  if(buy){if(rs>=54&&rs<=64)z+=12;else if(rs>=52&&rs<=66)z+=7;}else{if(rs>=36&&rs<=46)z+=12;else if(rs>=34&&rs<=48)z+=7;}
  if(adx>=28)z+=12;else if(adx>=MinADX)z+=8;if(vr>=1.20)z+=12;else if(vr>=MinVolumeRatio)z+=7;if(br>=0.60)z+=9;else if(br>=MinBodyRatio)z+=5;return z;
@@ -144,6 +144,6 @@ bool Close(string reason){ulong tk;if(!Position(tk)||!PositionSelectByTicket(tk)
 void Manage(){ulong tk;if(!Position(tk)||!PositionSelectByTicket(tk))return;long type=PositionGetInteger(POSITION_TYPE);bool buy=type==POSITION_TYPE_BUY;double op=PositionGetDouble(POSITION_PRICE_OPEN),sl=PositionGetDouble(POSITION_SL),tp=PositionGetDouble(POSITION_TP);datetime ot=(datetime)PositionGetInteger(POSITION_TIME);MqlTick t;if(!SymbolInfoTick(Sym,t))return;double atr=activeATR;if(atr<=0&&(!One(aH,0,1,atr)||atr<=0))return;activeATR=atr;double mp=buy?t.bid:t.ask,fd=buy?mp-op:op-mp;MqlDateTime n;TimeToStruct(TimeCurrent(),n);if(CloseBeforeWeekend&&n.day_of_week==5&&n.hour>=FridayCloseHour){Close("WEEKEND_PROTECTION");return;}if(MaxHoldBars>0&&TimeCurrent()-ot>=MaxHoldBars*900&&fd<atr*TimeExitMinProgressATR){Close("TIME_STOP_NO_PROGRESS");return;}
  double ds=sl;bool ch=false;if(UseBreakEven&&fd>=atr*BreakEvenTriggerATR){double be=buy?op+atr*BreakEvenOffsetATR:op-atr*BreakEvenOffsetATR;if((buy&&(sl==0||be>ds))||(!buy&&(sl==0||be<ds))){ds=be;ch=true;}}if(UseTrailingStop&&fd>=atr*TrailStartATR){double ts=buy?mp-atr*TrailDistanceATR:mp+atr*TrailDistanceATR;if((buy&&(sl==0||ts>ds))||(!buy&&(sl==0||ts<ds))){ds=ts;ch=true;}}if(!ch)return;ds=Price(ds);double md=MinStop();if(buy){if(ds>=mp-md||(sl>0&&ds<=sl+Tick()))return;}else{if(ds<=mp+md||(sl>0&&ds>=sl-Tick()))return;}if(trade.PositionModify(Sym,ds,tp))J("STOP_UPDATE",buy?"BUY":"SELL",activeSetup,activeScore,mp,atr,"adaptive_protection route="+activeRoute);}
 
-int OnInit(){Sym=InpTradeSymbol==""?_Symbol:InpTradeSymbol;if(!SymbolSelect(Sym,true)||RiskPercent<=0||RiskPercent>2)return INIT_FAILED;trade.SetExpertMagicNumber((int)MagicNumber);trade.SetDeviationInPoints(SlippagePoints);trade.SetTypeFillingBySymbol(Sym);fH=iMA(Sym,PERIOD_M15,FastLen,0,MODE_EMA,PRICE_CLOSE);sH=iMA(Sym,PERIOD_M15,SlowLen,0,MODE_EMA,PRICE_CLOSE);tH=iMA(Sym,PERIOD_M15,TrendLen,0,MODE_EMA,PRICE_CLOSE);rH=iRSI(Sym,PERIOD_M15,RsiLen,PRICE_CLOSE);aH=iATR(Sym,PERIOD_M15,AtrLen);dH=iADX(Sym,PERIOD_M15,AdxLen);h1f=iMA(Sym,PERIOD_H1,BiasFastLen,0,MODE_EMA,PRICE_CLOSE);h1s=iMA(Sym,PERIOD_H1,BiasSlowLen,0,MODE_EMA,PRICE_CLOSE);h1r=iRSI(Sym,PERIOD_H1,RsiLen,PRICE_CLOSE);h4f=iMA(Sym,PERIOD_H4,BiasFastLen,0,MODE_EMA,PRICE_CLOSE);h4s=iMA(Sym,PERIOD_H4,BiasSlowLen,0,MODE_EMA,PRICE_CLOSE);h4r=iRSI(Sym,PERIOD_H4,RsiLen,PRICE_CLOSE);if(fH==INVALID_HANDLE||sH==INVALID_HANDLE||tH==INVALID_HANDLE||rH==INVALID_HANDLE||aH==INVALID_HANDLE||dH==INVALID_HANDLE||h1f==INVALID_HANDLE||h1s==INVALID_HANDLE||h1r==INVALID_HANDLE||h4f==INVALID_HANDLE||h4s==INVALID_HANDLE||h4r==INVALID_HANDLE)return INIT_FAILED;ResetDay();J("EA_START","","",0,0,0,"V28_CONTEXTUAL_ROUTER risk_normalized=true quality_gate=strict_htf_alignment routes=BREAKOUT_BUY_07_08|PULLBACK_BUY_13_16|CONTINUATION_SELL_07_08|SWEEP_SELL_13_16");return INIT_SUCCEEDED;}
+int OnInit(){Sym=InpTradeSymbol==""?_Symbol:InpTradeSymbol;if(!SymbolSelect(Sym,true)||RiskPercent<=0||RiskPercent>2)return INIT_FAILED;trade.SetExpertMagicNumber((int)MagicNumber);trade.SetDeviationInPoints(SlippagePoints);trade.SetTypeFillingBySymbol(Sym);fH=iMA(Sym,PERIOD_M15,FastLen,0,MODE_EMA,PRICE_CLOSE);sH=iMA(Sym,PERIOD_M15,SlowLen,0,MODE_EMA,PRICE_CLOSE);tH=iMA(Sym,PERIOD_M15,TrendLen,0,MODE_EMA,PRICE_CLOSE);rH=iRSI(Sym,PERIOD_M15,RsiLen,PRICE_CLOSE);aH=iATR(Sym,PERIOD_M15,AtrLen);dH=iADX(Sym,PERIOD_M15,AdxLen);h1f=iMA(Sym,PERIOD_H1,BiasFastLen,0,MODE_EMA,PRICE_CLOSE);h1s=iMA(Sym,PERIOD_H1,BiasSlowLen,0,MODE_EMA,PRICE_CLOSE);h1r=iRSI(Sym,PERIOD_H1,RsiLen,PRICE_CLOSE);h4f=iMA(Sym,PERIOD_H4,BiasFastLen,0,MODE_EMA,PRICE_CLOSE);h4s=iMA(Sym,PERIOD_H4,BiasSlowLen,0,MODE_EMA,PRICE_CLOSE);h4r=iRSI(Sym,PERIOD_H4,RsiLen,PRICE_CLOSE);if(fH==INVALID_HANDLE||sH==INVALID_HANDLE||tH==INVALID_HANDLE||rH==INVALID_HANDLE||aH==INVALID_HANDLE||dH==INVALID_HANDLE||h1f==INVALID_HANDLE||h1s==INVALID_HANDLE||h1r==INVALID_HANDLE||h4f==INVALID_HANDLE||h4s==INVALID_HANDLE||h4r==INVALID_HANDLE)return INIT_FAILED;ResetDay();J("EA_START","","",0,0,0,"V28_CONTEXTUAL_ROUTER risk_normalized=true quality_gate=balanced_htf_alignment routes=BREAKOUT_BUY_07_08|PULLBACK_BUY_13_16|CONTINUATION_SELL_07_08|SWEEP_SELL_13_16");return INIT_SUCCEEDED;}
 void OnDeinit(const int reason){IndicatorRelease(fH);IndicatorRelease(sH);IndicatorRelease(tH);IndicatorRelease(rH);IndicatorRelease(aH);IndicatorRelease(dH);IndicatorRelease(h1f);IndicatorRelease(h1s);IndicatorRelease(h1r);IndicatorRelease(h4f);IndicatorRelease(h4s);IndicatorRelease(h4r);}
 void OnTick(){ResetDay();Manage();ulong tk;if(Position(tk)||!SessionOpen()||tradesToday>=MaxTradesPerDay||(lastEntryTime>0&&TimeCurrent()-lastEntryTime<CooldownMinutes*60)||!NewBar())return;Candidate c;if(Signals(c))Open(c);}
