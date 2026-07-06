@@ -109,9 +109,9 @@ function Write-FallbackReport(
   $html = @"
 <!doctype html>
 <html>
-<head><meta charset="utf-8"><title>V28 Contextual Risk MT5 Backtest</title></head>
+<head><meta charset="utf-8"><title>V28 Core Edge Router MT5 Backtest</title></head>
 <body>
-<h1>V28 Contextual Risk MT5 Backtest</h1>
+<h1>V28 Core Edge Router MT5 Backtest</h1>
 <table>
 <tr><th>Symbol</th><td>$Symbol</td></tr>
 <tr><th>Period</th><td>$Period</td></tr>
@@ -151,12 +151,16 @@ if (!(Test-Path $eaSource)) { throw "V28 EA source not found: $eaSource" }
 if (!(Test-Path $importerSource)) { throw "Importer source not found: $importerSource" }
 
 $runMarker = @(
-  "strategy=XAUUSD_V28_Contextual_Router",
+  "strategy=XAUUSD_V28_Core_Edge_Router",
+  "effective_profile=V28_CONTEXTUAL_RISK.set",
   "forced_trades=false",
   "arbitrary_daily_close=false",
   "risk_normalized=true",
   "risk_percent=0.20",
-  "routes=BREAKOUT_BUY_07_08|PULLBACK_BUY_13_16|CONTINUATION_SELL_07_08|SWEEP_SELL_13_16",
+  "strict_intraday=true",
+  "last_entry=19:15",
+  "hard_daily_flat=20:45",
+  "routes=CORE_PULLBACK_BUY_15|CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14",
   "symbol=$symbol",
   "period=$period",
   "from_date=$from",
@@ -310,6 +314,10 @@ $setLines = @(
   "UseSession=true",
   "SessionStartHour=7",
   "SessionEndHour=20",
+  "LastEntryHour=19",
+  "LastEntryMinute=15",
+  "HardFlatHour=20",
+  "HardFlatMinute=45",
   "BlockFridayLateEntries=true",
   "FridayLastEntryHour=17",
   "CloseBeforeWeekend=true",
