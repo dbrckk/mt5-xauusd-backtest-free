@@ -1,6 +1,6 @@
 #property strict
-#property version "2.84"
-#property description "V28 Contextual Router: balanced cross-period quality gates and normalized risk"
+#property version "2.85"
+#property description "V28 Contextual Router: defensive intraday exit compression and normalized risk"
 #include <Trade/Trade.mqh>
 CTrade trade;
 
@@ -52,13 +52,13 @@ input double ContinuationSL_ATR=1.00;
 input double SweepTP_ATR=1.45;
 input double SweepSL_ATR=0.95;
 input bool UseBreakEven=true;
-input double BreakEvenTriggerATR=0.85;
-input double BreakEvenOffsetATR=0.02;
+input double BreakEvenTriggerATR=0.60;
+input double BreakEvenOffsetATR=0.03;
 input bool UseTrailingStop=true;
-input double TrailStartATR=1.25;
-input double TrailDistanceATR=0.70;
-input int MaxHoldBars=28;
-input double TimeExitMinProgressATR=0.20;
+input double TrailStartATR=1.00;
+input double TrailDistanceATR=0.55;
+input int MaxHoldBars=20;
+input double TimeExitMinProgressATR=0.35;
 input bool UseCSVJournal=true;
 input string CSVJournalName="V27_CLEAN_journal.csv";
 
@@ -75,8 +75,8 @@ void Reset(Candidate &c){c.dir=0;c.setup="";c.route="";c.score=0;c.atr=0;}
 bool One(int h,int b,int sh,double &v){double x[];ArraySetAsSeries(x,true);if(h==INVALID_HANDLE||CopyBuffer(h,b,sh,1,x)!=1)return false;v=x[0];return MathIsValidNumber(v);}
 bool Rates(ENUM_TIMEFRAMES tf,int n,MqlRates &r[]){ArraySetAsSeries(r,true);return CopyRates(Sym,tf,0,n,r)>=n;}
 double VolSma(MqlRates &r[],int sh,int n){double s=0;for(int i=sh;i<sh+n;i++)s+=(double)r[i].tick_volume;return s/n;}
-double HH(MqlRates &r[],int sh,int n){double v=r[sh].high;for(int i=sh+1;i<sh+n;i++)v=MathMax(v,r[i].high);return v;}
-double LL(MqlRates &r[],int sh,int n){double v=r[sh].low;for(int i=sh+1;i<sh+n;i++)v=MathMin(v,r[i].low);return v;}
+double HH(MqlRates &r[],int sh,int n){double v=r[sh].high;for(int i=sh+1;i<n+sh;i++)v=MathMax(v,r[i].high);return v;}
+double LL(MqlRates &r[],int sh,int n){double v=r[sh].low;for(int i=sh+1;i<n+sh;i++)v=MathMin(v,r[i].low);return v;}
 
 void J(string ev,string dir,string setup,double score,double price,double atr,string details){
  if(!UseCSVJournal)return;int h=FileOpen(CSVJournalName,FILE_READ|FILE_WRITE|FILE_CSV|FILE_ANSI|FILE_SHARE_READ,',');if(h==INVALID_HANDLE)return;
@@ -142,8 +142,8 @@ bool Open(const Candidate &c){MqlTick t;if(!SymbolInfoTick(Sym,t))return false;d
 bool Close(string reason){ulong tk;if(!Position(tk)||!PositionSelectByTicket(tk))return false;string dir=PositionGetInteger(POSITION_TYPE)==POSITION_TYPE_BUY?"BUY":"SELL";double p=PositionGetDouble(POSITION_PRICE_CURRENT);bool ok=trade.PositionClose(tk);J(ok?"CLOSE_EVENT":"CLOSE_FAIL",dir,activeSetup,activeScore,p,activeATR,"reason="+reason+" route="+activeRoute);if(ok){activeATR=0;activeSetup="";activeRoute="";activeScore=0;activeRisk=0;}return ok;}
 
 void Manage(){ulong tk;if(!Position(tk)||!PositionSelectByTicket(tk))return;long type=PositionGetInteger(POSITION_TYPE);bool buy=type==POSITION_TYPE_BUY;double op=PositionGetDouble(POSITION_PRICE_OPEN),sl=PositionGetDouble(POSITION_SL),tp=PositionGetDouble(POSITION_TP);datetime ot=(datetime)PositionGetInteger(POSITION_TIME);MqlTick t;if(!SymbolInfoTick(Sym,t))return;double atr=activeATR;if(atr<=0&&(!One(aH,0,1,atr)||atr<=0))return;activeATR=atr;double mp=buy?t.bid:t.ask,fd=buy?mp-op:op-mp;MqlDateTime n;TimeToStruct(TimeCurrent(),n);if(CloseBeforeWeekend&&n.day_of_week==5&&n.hour>=FridayCloseHour){Close("WEEKEND_PROTECTION");return;}if(MaxHoldBars>0&&TimeCurrent()-ot>=MaxHoldBars*900&&fd<atr*TimeExitMinProgressATR){Close("TIME_STOP_NO_PROGRESS");return;}
- double ds=sl;bool ch=false;if(UseBreakEven&&fd>=atr*BreakEvenTriggerATR){double be=buy?op+atr*BreakEvenOffsetATR:op-atr*BreakEvenOffsetATR;if((buy&&(sl==0||be>ds))||(!buy&&(sl==0||be<ds))){ds=be;ch=true;}}if(UseTrailingStop&&fd>=atr*TrailStartATR){double ts=buy?mp-atr*TrailDistanceATR:mp+atr*TrailDistanceATR;if((buy&&(sl==0||ts>ds))||(!buy&&(sl==0||ts<ds))){ds=ts;ch=true;}}if(!ch)return;ds=Price(ds);double md=MinStop();if(buy){if(ds>=mp-md||(sl>0&&ds<=sl+Tick()))return;}else{if(ds<=mp+md||(sl>0&&ds>=sl-Tick()))return;}if(trade.PositionModify(Sym,ds,tp))J("STOP_UPDATE",buy?"BUY":"SELL",activeSetup,activeScore,mp,atr,"adaptive_protection route="+activeRoute);}
+ double ds=sl;bool ch=false;if(UseBreakEven&&fd>=atr*BreakEvenTriggerATR){double be=buy?op+atr*BreakEvenOffsetATR:op-atr*BreakEvenOffsetATR;if((buy&&(sl==0||be>ds))||(!buy&&(sl==0||be<ds))){ds=be;ch=true;}}if(UseTrailingStop&&fd>=atr*TrailStartATR){double ts=buy?mp-atr*TrailDistanceATR:mp+atr*TrailDistanceATR;if((buy&&(sl==0||ts>ds))||(!buy&&(sl==0||ts<ds))){ds=ts;ch=true;}}if(!ch)return;ds=Price(ds);double md=MinStop();if(buy){if(ds>=mp-md||(sl>0&&ds<=sl+Tick()))return;}else{if(ds<=mp+md||(sl>0&&ds>=sl-Tick()))return;}if(trade.PositionModify(Sym,ds,tp))J("STOP_UPDATE",buy?"BUY":"SELL",activeSetup,activeScore,mp,atr,"defensive_exit_compression route="+activeRoute);}
 
-int OnInit(){Sym=InpTradeSymbol==""?_Symbol:InpTradeSymbol;if(!SymbolSelect(Sym,true)||RiskPercent<=0||RiskPercent>2)return INIT_FAILED;trade.SetExpertMagicNumber((int)MagicNumber);trade.SetDeviationInPoints(SlippagePoints);trade.SetTypeFillingBySymbol(Sym);fH=iMA(Sym,PERIOD_M15,FastLen,0,MODE_EMA,PRICE_CLOSE);sH=iMA(Sym,PERIOD_M15,SlowLen,0,MODE_EMA,PRICE_CLOSE);tH=iMA(Sym,PERIOD_M15,TrendLen,0,MODE_EMA,PRICE_CLOSE);rH=iRSI(Sym,PERIOD_M15,RsiLen,PRICE_CLOSE);aH=iATR(Sym,PERIOD_M15,AtrLen);dH=iADX(Sym,PERIOD_M15,AdxLen);h1f=iMA(Sym,PERIOD_H1,BiasFastLen,0,MODE_EMA,PRICE_CLOSE);h1s=iMA(Sym,PERIOD_H1,BiasSlowLen,0,MODE_EMA,PRICE_CLOSE);h1r=iRSI(Sym,PERIOD_H1,RsiLen,PRICE_CLOSE);h4f=iMA(Sym,PERIOD_H4,BiasFastLen,0,MODE_EMA,PRICE_CLOSE);h4s=iMA(Sym,PERIOD_H4,BiasSlowLen,0,MODE_EMA,PRICE_CLOSE);h4r=iRSI(Sym,PERIOD_H4,RsiLen,PRICE_CLOSE);if(fH==INVALID_HANDLE||sH==INVALID_HANDLE||tH==INVALID_HANDLE||rH==INVALID_HANDLE||aH==INVALID_HANDLE||dH==INVALID_HANDLE||h1f==INVALID_HANDLE||h1s==INVALID_HANDLE||h1r==INVALID_HANDLE||h4f==INVALID_HANDLE||h4s==INVALID_HANDLE||h4r==INVALID_HANDLE)return INIT_FAILED;ResetDay();J("EA_START","","",0,0,0,"V28_CONTEXTUAL_ROUTER risk_normalized=true quality_gate=balanced_htf_alignment routes=BREAKOUT_BUY_07_08|PULLBACK_BUY_13_16|CONTINUATION_SELL_07_08|SWEEP_SELL_13_16");return INIT_SUCCEEDED;}
+int OnInit(){Sym=InpTradeSymbol==""?_Symbol:InpTradeSymbol;if(!SymbolSelect(Sym,true)||RiskPercent<=0||RiskPercent>2)return INIT_FAILED;trade.SetExpertMagicNumber((int)MagicNumber);trade.SetDeviationInPoints(SlippagePoints);trade.SetTypeFillingBySymbol(Sym);fH=iMA(Sym,PERIOD_M15,FastLen,0,MODE_EMA,PRICE_CLOSE);sH=iMA(Sym,PERIOD_M15,SlowLen,0,MODE_EMA,PRICE_CLOSE);tH=iMA(Sym,PERIOD_M15,TrendLen,0,MODE_EMA,PRICE_CLOSE);rH=iRSI(Sym,PERIOD_M15,RsiLen,PRICE_CLOSE);aH=iATR(Sym,PERIOD_M15,AtrLen);dH=iADX(Sym,PERIOD_M15,AdxLen);h1f=iMA(Sym,PERIOD_H1,BiasFastLen,0,MODE_EMA,PRICE_CLOSE);h1s=iMA(Sym,PERIOD_H1,BiasSlowLen,0,MODE_EMA,PRICE_CLOSE);h1r=iRSI(Sym,PERIOD_H1,RsiLen,PRICE_CLOSE);h4f=iMA(Sym,PERIOD_H4,BiasFastLen,0,MODE_EMA,PRICE_CLOSE);h4s=iMA(Sym,PERIOD_H4,BiasSlowLen,0,MODE_EMA,PRICE_CLOSE);h4r=iRSI(Sym,PERIOD_H4,RsiLen,PRICE_CLOSE);if(fH==INVALID_HANDLE||sH==INVALID_HANDLE||tH==INVALID_HANDLE||rH==INVALID_HANDLE||aH==INVALID_HANDLE||dH==INVALID_HANDLE||h1f==INVALID_HANDLE||h1s==INVALID_HANDLE||h1r==INVALID_HANDLE||h4f==INVALID_HANDLE||h4s==INVALID_HANDLE||h4r==INVALID_HANDLE)return INIT_FAILED;ResetDay();J("EA_START","","",0,0,0,"V28_CONTEXTUAL_ROUTER risk_normalized=true quality_gate=defensive_exit_compression routes=BREAKOUT_BUY_07_08|PULLBACK_BUY_13_16|CONTINUATION_SELL_07_08|SWEEP_SELL_13_16");return INIT_SUCCEEDED;}
 void OnDeinit(const int reason){IndicatorRelease(fH);IndicatorRelease(sH);IndicatorRelease(tH);IndicatorRelease(rH);IndicatorRelease(aH);IndicatorRelease(dH);IndicatorRelease(h1f);IndicatorRelease(h1s);IndicatorRelease(h1r);IndicatorRelease(h4f);IndicatorRelease(h4s);IndicatorRelease(h4r);}
 void OnTick(){ResetDay();Manage();ulong tk;if(Position(tk)||!SessionOpen()||tradesToday>=MaxTradesPerDay||(lastEntryTime>0&&TimeCurrent()-lastEntryTime<CooldownMinutes*60)||!NewBar())return;Candidate c;if(Signals(c))Open(c);}
