@@ -2,74 +2,117 @@
 
 Deterministic MT5 backtesting for XAUUSD using free public market data and GitHub Actions.
 
-## Current strategy: V27 Clean Multi-Setup
+This repository is for **educational demo-only EA research**. It is not validated for real-money deployment.
+
+## Fixed objective policy
+
+Policy file:
+
+`research/objective-policy.json`
+
+Current experimental targets:
+
+- symbol: `XAUUSD` / test symbol `XAU_PUBLIC`;
+- timeframe: `M15`;
+- initial capital reference: `$15,000`;
+- validated win rate target: `>= 70%`;
+- average monthly return target versus initial capital: `>= 5%`;
+- strict intraday operation;
+- maximum overnight trades: `0`;
+- real-money use: `false`.
+
+Acceptance requires fresh validation across all configured periods and does not treat post-filter estimates as validation.
+
+## Current strategy: V28 Core Edge Router
+
+EA source:
 
 `MQL5/Experts/XAUUSD_V27_Clean_MultiSetup.mq5`
 
-V27 replaces the invalid V26 validation profile.
+The retained filename is historical. The committed strategy identity is now **V28 Core Edge Router**.
 
-### Removed
+Active route-hour cells:
 
-- forced daily trades;
-- forced 15:45 fallback entries;
-- arbitrary 16:00 position closes;
-- runtime PowerShell mutation of the EA source;
-- synthetic minute bars inserted into missing history;
-- full-notional custom-symbol margin that broke Y3;
-- duplicated log counting in the active analyzer.
+1. `CORE_PULLBACK_BUY_15`
+2. `CORE_CONTINUATION_SELL_07_08`
+3. `CORE_SWEEP_SELL_13_14`
 
-### Natural entry engine
-
-V27 evaluates four independent M15 setups:
-
-1. `BREAKOUT`
-2. `PULLBACK`
-3. `CONTINUATION`
-4. `SWEEP`
-
-Every candidate is filtered and scored with:
-
-- M15 EMA 9/21/200 structure;
-- H1 EMA 50/200 + RSI bias;
-- H4 EMA 50/200 + RSI context;
-- M15 RSI;
-- M15 ADX;
-- tick-volume ratio;
-- candle body quality;
-- spread relative to ATR.
-
-The EA never opens a trade merely because a day has no trade.
+The current V28 core deliberately removed weak historical cells such as broad `PULLBACK_BUY_13_16`, `BREAKOUT_BUY_07_08`, and broad `SWEEP_SELL_13_16`.
 
 Default controls:
 
 - one open position at a time;
 - maximum 4 natural entries per day;
 - 45-minute cooldown;
-- 07:00-20:00 UTC entry window;
+- 07:00-20:00 UTC session;
+- last entry gate: 19:15 UTC;
+- hard daily flat gate: 20:45 UTC;
 - no new Friday entries after 17:00 UTC;
-- weekend protection only;
+- weekend protection;
 - setup-specific ATR TP/SL;
-- break-even after 0.65 ATR;
-- trailing stop after 1.0 ATR;
-- no-progress time stop after 20 M15 bars.
+- risk percent: `0.20%` per trade;
+- no forced daily trades;
+- no runtime mutation of EA source.
 
-## Active 3-year validation
+## Latest completed validation
+
+Workflow run:
+
+`#96` / `28795916853`
+
+Validated commit:
+
+`8ec8c6738d21f6cf9152300180d730892de1ef93`
+
+Merge commit:
+
+`b3d2c9d484c9792309196d747fe2d58e9308e4b6`
+
+Fresh four-period artifacts completed successfully for Y0_OOS, Y1, Y2, and Y3.
+
+| Period | Trades | Win rate | Profit factor | Net profit | Artifact verdict |
+|---|---:|---:|---:|---:|---|
+| Y0_OOS | 19 | 63.2% | 1.93 | +$171 | INSUFFICIENT_SAMPLE |
+| Y1 | 14 | 71.4% | 2.80 | +$185 | INSUFFICIENT_SAMPLE |
+| Y2 | 21 | 57.1% | 1.15 | +$35 | INSUFFICIENT_SAMPLE |
+| Y3 | 23 | 78.3% | 3.86 | +$375 | INSUFFICIENT_SAMPLE |
+
+Approximate aggregate from artifact summaries:
+
+| Metric | Result | Target | Status |
+|---|---:|---:|---|
+| Trades | 77 | sufficient sample required | fail |
+| Wins | 52 | n/a | n/a |
+| Win rate | 67.53% | >= 70% | fail |
+| Net profit | +$766 | all periods positive | pass |
+| Average monthly return vs initial | ~0.106% | >= 5% | fail |
+| Overnight trades | not indicated in artifact names; job checks passed | 0 | pending artifact-level audit |
+| Job status | all four jobs success | all complete | pass |
+
+Conclusion: the V28 core is materially cleaner and cross-period positive, but the fixed policy objective is **not validated**. The main defects are insufficient sample size, win rate below 70%, and monthly return far below +5%.
+
+## Active validation workflow
 
 Workflow:
 
 `.github/workflows/ea-v26-3y.yml`
 
-The file path is retained for continuity, but the workflow now runs **V27 Clean Multi-Setup**.
+The path is retained for continuity, but the workflow now validates V28.
 
 Matrix:
 
 | Chunk | Period |
 |---|---|
+| Y0_OOS | 2022-06-21 to 2023-06-21 |
 | Y1 | 2023-06-21 to 2024-06-21 |
 | Y2 | 2024-06-21 to 2025-06-21 |
 | Y3 | 2025-06-21 to 2026-06-21 |
 
+Triggering paths are intentionally narrow. Avoid touching workflow-triggering files while a validation run is active because concurrency cancels in-progress tests.
+
 ## Public history rules
+
+Downloader:
 
 `scripts/download_public_xau_m1.py`
 
@@ -85,7 +128,7 @@ The active downloader:
 - records real coverage diagnostics;
 - fails the run when minimum coverage is not reached.
 
-The EA still opens new trades only during its 07:00-20:00 UTC entry window. Full-day history is used so M15/H1/H4 indicators are calculated from the real surrounding market context rather than a truncated session.
+The EA opens new trades only during its configured intraday entry window. Full-day history is used so M15/H1/H4 indicators are calculated from the real surrounding market context rather than a truncated session.
 
 Default quality gates:
 
@@ -98,15 +141,13 @@ Default quality gates:
 
 `MQL5/Experts/ImportCustomRatesEA.mq5`
 
-`XAU_PUBLIC` now uses `SYMBOL_CALC_MODE_CFDLEVERAGE`.
-
-This fixes the V26 Y3 failure where a 0.04-lot position required nearly the full gold notional despite a 1:100 tester account.
+`XAU_PUBLIC` uses `SYMBOL_CALC_MODE_CFDLEVERAGE` so custom-symbol margin does not consume the full gold notional in the tester account.
 
 ## Deterministic runner
 
 `scripts/run-ea-v27-public-backtest.ps1`
 
-The runner compiles and executes the committed V27 source directly.
+The runner compiles and executes the committed source directly.
 
 It does not:
 
@@ -116,45 +157,10 @@ It does not:
 - change the session;
 - change TP/SL during CI.
 
-The committed source and `V27_CLEAN.set` are the source of truth.
+The committed source and effective `.set` profile must remain aligned before interpreting validation results.
 
-## Result analysis
+## Next justified research direction
 
-`scripts/analyze-v27-results.py`
+Do not increase risk to manufacture the +5% target.
 
-The V27 analyzer:
-
-- deduplicates MT5 deals by deal ID;
-- pairs closed trades;
-- reconstructs profit from unique fills;
-- calculates win rate, profit factor, expectancy and drawdown;
-- reports BUY and SELL separately;
-- reports every setup separately;
-- deduplicates execution errors;
-- detects `No money` failures;
-- verifies market-data quality.
-
-Main outputs:
-
-- `V27_ANALYSIS.json`
-- `V27_TRADES.csv`
-- `V27_CLEAN_journal.csv`
-- `download_diagnostics.json`
-
-## Validation principle
-
-A green GitHub Actions job means the infrastructure completed correctly.
-
-Strategy quality is judged separately from:
-
-- trade count;
-- net profit;
-- win rate;
-- profit factor;
-- expectancy;
-- drawdown;
-- data quality;
-- execution errors;
-- consistency across Y1, Y2 and Y3.
-
-No strategy is considered validated from one profitable chunk.
+The next improvement should preserve the robust V28 core and add only independently gated opportunity modules that can increase sample size without reopening historically weak route-hour cells. Candidate work should be validated by fresh Y0_OOS/Y1/Y2/Y3 backtests before being treated as evidence.
