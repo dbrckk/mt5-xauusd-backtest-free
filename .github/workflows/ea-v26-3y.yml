@@ -114,27 +114,29 @@ jobs:
           $ea = Get-Content $eaPath -Raw
           $required = @(
             "V28 Contextual Router",
+            "fresh core-edge route-hour validation",
             "struct Candidate",
-            "V28_CONTEXTUAL_ROUTER",
-            "BREAKOUT_BUY_07_08",
-            "PULLBACK_BUY_13_16",
-            "CONTINUATION_SELL_07_08",
-            "SWEEP_SELL_13_16",
+            "CORE_PULLBACK_BUY_15",
+            "CORE_CONTINUATION_SELL_07_08",
+            "CORE_SWEEP_SELL_13_14",
             "UseRiskPercent",
+            "RiskPercent=0.20",
+            "HardFlatHour=20",
+            "HardFlatMinute=45",
             "OrderCalcProfit"
           )
           foreach ($marker in $required) {
-            if (!$ea.Contains($marker)) { throw "V28 marker missing: $marker" }
+            if (!$ea.Contains($marker)) { throw "V28 core marker missing: $marker" }
           }
-          $forbidden = @("ZLEMA_AUTO", "Zlema(", "V27_CLEAN_MULTISETUP")
+          $forbidden = @("ZLEMA_AUTO", "Zlema(", "V27_CLEAN_MULTISETUP", "BREAKOUT_BUY_07_08", "PULLBACK_BUY_13_16", "SWEEP_SELL_13_16")
           foreach ($marker in $forbidden) {
-            if ($ea.Contains($marker)) { throw "Wrong strategy source detected: $marker" }
+            if ($ea.Contains($marker)) { throw "Wrong or stale strategy source detected: $marker" }
           }
           New-Item -ItemType Directory -Force -Path reports | Out-Null
           $checkedOutSha = (git rev-parse HEAD).Trim()
           $eaSha = (Get-FileHash -Algorithm SHA256 -Path $eaPath).Hash
           @(
-            "strategy=XAUUSD_V28_Contextual_Router",
+            "strategy=XAUUSD_V28_Core_Edge_Router",
             "identity=PASS",
             "checked_out_sha=$checkedOutSha",
             "ea_sha256=$eaSha",
@@ -142,7 +144,7 @@ jobs:
             "arbitrary_daily_close=false",
             "risk_normalized=true",
             "risk_percent=0.20",
-            "routes=BREAKOUT_BUY_07_08|PULLBACK_BUY_13_16|CONTINUATION_SELL_07_08|SWEEP_SELL_13_16"
+            "routes=CORE_PULLBACK_BUY_15|CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14"
           ) | Set-Content -Path reports/V28_SOURCE_IDENTITY.txt -Encoding UTF8
           Get-Content reports/V28_SOURCE_IDENTITY.txt
 

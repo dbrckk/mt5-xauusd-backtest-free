@@ -1,0 +1,42 @@
+{
+  "project": "XAUUSD intraday EA educational demo research",
+  "environment": {
+    "demo_only": true,
+    "real_money_use": false,
+    "symbol": "XAUUSD",
+    "test_symbol": "XAU_PUBLIC",
+    "execution_timeframe": "M15",
+    "initial_capital": 15000.0
+  },
+  "hard_constraints": {
+    "strict_intraday": true,
+    "maximum_overnight_trades": 0,
+    "weekend_positions_allowed": false
+  },
+  "experimental_targets": {
+    "minimum_validated_win_rate": 0.70,
+    "minimum_average_monthly_return_pct_of_initial": 5.0
+  },
+  "validation_periods": [
+    "Y0_OOS",
+    "Y1",
+    "Y2",
+    "Y3"
+  ],
+  "acceptance_rules": {
+    "fresh_backtest_required": true,
+    "all_period_jobs_must_complete": true,
+    "all_periods_must_be_net_positive": true,
+    "data_quality_must_pass": true,
+    "source_immutability_must_pass": true,
+    "execution_errors_must_be_zero": true,
+    "post_filter_estimates_are_not_validation": true
+  },
+  "research_rules": {
+    "do_not_raise_risk_to_manufacture_target": true,
+    "do_not_force_daily_trades": true,
+    "prefer_independent_signal_modules_over_relaxing_weak_cells": true,
+    "reject_changes_that_improve_one_period_but_break_cross_period_robustness": true,
+    "preserve_out_of_sample_evidence": true
+  }
+}
