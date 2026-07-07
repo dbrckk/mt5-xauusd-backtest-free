@@ -2,6 +2,7 @@ import argparse
 import csv
 import json
 import math
+import os
 import re
 from collections import defaultdict
 from datetime import datetime
@@ -53,6 +54,34 @@ def read_texts(root: Path) -> dict[str, str]:
 
 def parse_time(value: str) -> datetime:
     return datetime.strptime(str(value), "%Y.%m.%d %H:%M:%S")
+
+
+def parse_date_bound(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    for fmt in ("%Y.%m.%d", "%Y-%m-%d", "%Y.%m.%d %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(str(value), fmt)
+        except Exception:
+            continue
+    return None
+
+
+def month_key(dt: datetime) -> str:
+    return f"{dt.year:04d}-{dt.month:02d}"
+
+
+def iter_calendar_months(start: datetime, end: datetime) -> list[str]:
+    current = datetime(start.year, start.month, 1)
+    last = datetime(end.year, end.month, 1)
+    months = []
+    while current <= last:
+        months.append(month_key(current))
+        if current.month == 12:
+            current = datetime(current.year + 1, 1, 1)
+        else:
+            current = datetime(current.year, current.month + 1, 1)
+    return months
 
 
 def find_final_balance(blob: str) -> float | None:
@@ -168,7 +197,7 @@ def pair_trades(deals: list[dict]) -> list[dict]:
                 "hold_minutes": int((exit_time - entry_time).total_seconds() // 60),
                 "entry_hour": entry_time.hour,
                 "entry_day_of_week": entry_time.strftime("%A").upper(),
-                "entry_month": entry_time.strftime("%Y-%m"),
+                "entry_month": month_key(entry_time),
                 "overnight": entry_time.date() != exit_time.date(),
             }
         )
@@ -219,11 +248,11 @@ def stats_for(trades: list[dict], deposit: float) -> dict:
         return {
             "trades": 0, "wins": 0, "losses": 0, "win_rate": None,
             "gross_profit": 0.0, "gross_loss": 0.0, "profit_factor": None,
-            "net_profit": 0.0, "return_pct_of_initial": 0.0, "expectancy": None,
-            "average_win": None, "average_loss": None, "max_drawdown_money": 0.0,
-            "max_drawdown_pct": 0.0, "average_lot": None, "average_planned_risk": None,
-            "average_actual_risk": None, "average_risk_realization": None,
-            "average_r_multiple": None, "overnight_trades": 0,
+            "profit_factor_infinite": False, "net_profit": 0.0, "return_pct_of_initial": 0.0,
+            "expectancy": None, "average_win": None, "average_loss": None,
+            "max_drawdown_money": 0.0, "max_drawdown_pct": 0.0,
+            "average_lot": None, "average_planned_risk": None, "average_actual_risk": None,
+            "average_risk_realization": None, "average_r_multiple": None, "overnight_trades": 0,
         }
 
     profits = [float(trade["profit_money"]) for trade in trades]
@@ -309,24 +338,34 @@ def rolling_period_stats(trades: list[dict], months: int, deposit: float) -> dic
     }
 
 
-def monthly_objective_stats(trades: list[dict], deposit: float) -> dict:
+def monthly_objective_stats(trades: list[dict], deposit: float, start: datetime | None, end: datetime | None) -> dict:
     grouped = defaultdict(list)
     for trade in trades:
         grouped[trade["entry_month"]].append(trade)
-    rows = {key: stats_for(value, deposit) for key, value in sorted(grouped.items())}
+
+    if start is None and trades:
+        start = min(trade["entry_time"] for trade in trades)
+    if end is None and trades:
+        end = max(trade["entry_time"] for trade in trades)
+
+    calendar_months = iter_calendar_months(start, end) if start and end else sorted(grouped.keys())
+    rows = {key: stats_for(grouped.get(key, []), deposit) for key in calendar_months}
     net_values = [row["net_profit"] for row in rows.values()]
     target_money = round(deposit * TARGET_MONTHLY_RETURN, 2)
     monthly_passes = [value >= target_money for value in net_values]
     return {
         "target_monthly_return_pct_of_initial": round(TARGET_MONTHLY_RETURN * 100.0, 4),
         "target_monthly_net_profit": target_money,
-        "active_months": len(rows),
+        "calendar_months": len(rows),
+        "active_months": sum(1 for row in rows.values() if row["trades"] > 0),
+        "zero_trade_months": sum(1 for row in rows.values() if row["trades"] == 0),
         "months": rows,
         "average_monthly_net_profit": round(sum(net_values) / len(net_values), 2) if net_values else None,
         "average_monthly_return_pct_of_initial": round((sum(net_values) / len(net_values) / deposit) * 100.0, 4) if net_values and deposit > 0 else None,
         "months_meeting_target": sum(1 for passed in monthly_passes if passed),
         "months_below_target": sum(1 for passed in monthly_passes if not passed),
         "negative_months": sum(1 for value in net_values if value < 0),
+        "zero_or_negative_months": sum(1 for value in net_values if value <= 0),
         "min_monthly_net_profit": round(min(net_values), 2) if net_values else None,
         "max_monthly_net_profit": round(max(net_values), 2) if net_values else None,
     }
@@ -399,7 +438,7 @@ def classify(overall: dict, errors: dict, quality: dict, monthly: dict) -> tuple
     wr = overall.get("win_rate")
     dd = overall.get("max_drawdown_pct", 100.0)
     avg_monthly = monthly.get("average_monthly_return_pct_of_initial")
-    active_months = int(monthly.get("active_months") or 0)
+    calendar_months = int(monthly.get("calendar_months") or monthly.get("active_months") or 0)
     overnight = int(overall.get("overnight_trades") or 0)
 
     if overnight > 0:
@@ -416,11 +455,11 @@ def classify(overall: dict, errors: dict, quality: dict, monthly: dict) -> tuple
         objective_failures.append(f"profit factor {pf} below robustness floor {MIN_OBJECTIVE_PROFIT_FACTOR}")
     if dd > MAX_OBJECTIVE_DRAWDOWN_PCT:
         objective_failures.append(f"drawdown {dd}% above robustness ceiling {MAX_OBJECTIVE_DRAWDOWN_PCT}%")
-    if active_months < 6:
-        objective_failures.append(f"only {active_months} active month(s); minimum 6 preferred for monthly target validation")
+    if calendar_months < 6:
+        objective_failures.append(f"only {calendar_months} calendar month(s); minimum 6 preferred for monthly target validation")
 
     if not objective_failures:
-        return "OBJECTIVE_VALIDATED", ["70% win-rate, +5% average monthly return, intraday rule, PF and drawdown gates met"]
+        return "OBJECTIVE_VALIDATED", ["70% win-rate, +5% average calendar monthly return, intraday rule, PF and drawdown gates met"]
 
     if overall.get("net_profit", 0.0) > 0 and pf is not None and pf >= 1.10 and wr is not None and wr >= 0.52:
         return "PROMISING_RETEST", objective_failures
@@ -449,7 +488,10 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("reports_dir")
     parser.add_argument("--deposit", type=float, default=15000.0)
+    parser.add_argument("--from-date", default=os.environ.get("BT_FROM_DATE"))
+    parser.add_argument("--to-date", default=os.environ.get("BT_TO_DATE"))
     args = parser.parse_args()
+
     root = Path(args.reports_dir)
     texts = read_texts(root)
     blob = "\n".join(texts.values())
@@ -459,13 +501,15 @@ def main() -> int:
     attach_journal_context(trades, journal)
 
     overall = stats_for(trades, args.deposit)
-    monthly = monthly_objective_stats(trades, args.deposit)
+    from_date = parse_date_bound(args.from_date)
+    to_date = parse_date_bound(args.to_date)
+    monthly = monthly_objective_stats(trades, args.deposit, from_date, to_date)
     errors = unique_error_lines(blob)
     data_quality = load_data_quality(root)
     final_balance = find_final_balance(blob)
     verdict, reasons = classify(overall, errors, data_quality, monthly)
     result = {
-        "strategy": "XAUUSD_V28_Contextual_Router",
+        "strategy": "XAUUSD_V30_Symmetric_Edge",
         "verdict": verdict,
         "reasons": reasons,
         "objective_targets": {
@@ -475,8 +519,11 @@ def main() -> int:
             "minimum_closed_trades": MIN_OBJECTIVE_TRADES,
             "profit_factor_floor": MIN_OBJECTIVE_PROFIT_FACTOR,
             "drawdown_pct_ceiling": MAX_OBJECTIVE_DRAWDOWN_PCT,
+            "zero_trade_calendar_months_count_as_zero_return": True,
         },
         "deposit": args.deposit,
+        "period_from": args.from_date,
+        "period_to": args.to_date,
         "final_balance_reported": final_balance,
         "final_balance_reconstructed": round(args.deposit + overall["net_profit"], 2),
         "unique_deals": len(deals),
