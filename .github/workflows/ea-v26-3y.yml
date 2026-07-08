@@ -1,5 +1,5 @@
-name: EA V30 SYMMETRIC EDGE VALIDATION
-run-name: V30 symmetric edge · ${{ github.ref_name }} · ${{ github.sha }}
+name: EA V32 PRUNED CORE VALIDATION
+run-name: V32 pruned core · ${{ github.ref_name }} · ${{ github.sha }}
 
 on:
   workflow_dispatch:
@@ -27,6 +27,7 @@ on:
       - autonomous-demo-research
       - v29-strict-sweep-validation
       - v30-symmetric-edge-validation
+      - v32-quality-gate-validation
     paths:
       - ".github/workflows/ea-v26-3y.yml"
       - "MQL5/Experts/XAUUSD_V27_Clean_MultiSetup.mq5"
@@ -34,6 +35,7 @@ on:
       - "scripts/run-ea-v27-public-backtest.ps1"
       - "scripts/download_public_xau_m1.py"
       - "scripts/analyze-v27-results.py"
+      - "scripts/apply-v32-prune-edge.ps1"
   pull_request:
     branches: [main]
     paths:
@@ -43,12 +45,13 @@ on:
       - "scripts/run-ea-v27-public-backtest.ps1"
       - "scripts/download_public_xau_m1.py"
       - "scripts/analyze-v27-results.py"
+      - "scripts/apply-v32-prune-edge.ps1"
 
 permissions:
   contents: read
 
 concurrency:
-  group: v30-symmetric-edge-${{ github.ref }}-${{ github.event_name }}
+  group: v32-pruned-core-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
@@ -108,21 +111,23 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Validate canonical V30 identity
+      - name: Apply canonical V32 edge pruning
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/apply-v32-prune-edge.ps1
+
+      - name: Validate canonical V32 identity
         shell: pwsh
         run: |
           $eaPath = "MQL5/Experts/XAUUSD_V27_Clean_MultiSetup.mq5"
-          if (!(Test-Path $eaPath)) { throw "V30 source is missing: $eaPath" }
+          if (!(Test-Path $eaPath)) { throw "V32 source is missing: $eaPath" }
           $ea = Get-Content $eaPath -Raw
           $required = @(
-            "V30 Symmetric Opportunity Expansion",
-            "V30_SYMMETRIC_OPPORTUNITY_EXPANSION",
+            "V32 Pruned Core Quality Gate",
+            "V32_PRUNED_CORE_QUALITY_GATE",
             "struct Candidate",
             "CORE_PULLBACK_BUY_15",
             "CORE_CONTINUATION_SELL_07_08",
             "CORE_SWEEP_SELL_13_14",
-            "EDGE_PULLBACK_SELL_15",
-            "EDGE_CONTINUATION_BUY_07_08",
             "EdgeQuality",
             "UseRiskPercent",
             "RiskPercent=0.20",
@@ -131,7 +136,7 @@ jobs:
             "OrderCalcProfit"
           )
           foreach ($marker in $required) {
-            if (!$ea.Contains($marker)) { throw "V30 marker missing: $marker" }
+            if (!$ea.Contains($marker)) { throw "V32 marker missing: $marker" }
           }
           $forbidden = @(
             "ZLEMA_AUTO",
@@ -140,16 +145,18 @@ jobs:
             "EDGE_SWEEP_SELL_12_15_STRICT",
             "BREAKOUT_BUY_07_08",
             "PULLBACK_BUY_13_16",
-            "SWEEP_SELL_13_16"
+            "SWEEP_SELL_13_16",
+            "EDGE_PULLBACK_SELL_15",
+            "EDGE_CONTINUATION_BUY_07_08"
           )
           foreach ($marker in $forbidden) {
-            if ($ea.Contains($marker)) { throw "Wrong or stale strategy source detected: $marker" }
+            if ($ea.Contains($marker)) { throw "Wrong, stale, or pruned route still detected: $marker" }
           }
           New-Item -ItemType Directory -Force -Path reports | Out-Null
           $checkedOutSha = (git rev-parse HEAD).Trim()
           $eaSha = (Get-FileHash -Algorithm SHA256 -Path $eaPath).Hash
           @(
-            "strategy=XAUUSD_V30_Symmetric_Edge",
+            "strategy=XAUUSD_V32_Pruned_Core_Quality_Gate",
             "identity=PASS",
             "checked_out_sha=$checkedOutSha",
             "ea_sha256=$eaSha",
@@ -158,18 +165,20 @@ jobs:
             "risk_normalized=true",
             "risk_percent=0.20",
             "strict_intraday=true",
-            "routes=CORE_PULLBACK_BUY_15|CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14|EDGE_PULLBACK_SELL_15|EDGE_CONTINUATION_BUY_07_08"
-          ) | Set-Content -Path reports/V30_SOURCE_IDENTITY.txt -Encoding UTF8
-          Get-Content reports/V30_SOURCE_IDENTITY.txt
+            "edge_routes_pruned=true",
+            "routes=CORE_PULLBACK_BUY_15|CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14"
+          ) | Set-Content -Path reports/V32_SOURCE_IDENTITY.txt -Encoding UTF8
+          Get-Content reports/V32_SOURCE_IDENTITY.txt
 
       - name: Cache Dukascopy public XAU history
         uses: actions/cache@v4
         with:
           path: .cache/dukascopy
-          key: dukascopy-xau-v30-symmetric-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-v1
+          key: dukascopy-xau-v32-pruned-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-v1
           restore-keys: |
+            dukascopy-xau-v32-pruned-${{ matrix.chunk }}-
+            dukascopy-xau-v32-pruned-
             dukascopy-xau-v30-symmetric-${{ matrix.chunk }}-
-            dukascopy-xau-v30-symmetric-
             dukascopy-xau-v29-sweep-${{ matrix.chunk }}-
             dukascopy-xau-v28-${{ matrix.chunk }}-
             dukascopy-xau-v28-
@@ -182,17 +191,18 @@ jobs:
             "MQL5/Experts/ImportCustomRatesEA.mq5",
             "scripts/run-ea-v27-public-backtest.ps1",
             "scripts/download_public_xau_m1.py",
-            "scripts/analyze-v27-results.py"
+            "scripts/analyze-v27-results.py",
+            "scripts/apply-v32-prune-edge.ps1"
           )
           $digests = [ordered]@{}
           foreach ($path in $paths) {
             if (!(Test-Path $path)) { throw "Missing committed source: $path" }
             $digests[$path] = (Get-FileHash -Algorithm SHA256 -Path $path).Hash
           }
-          $digestPath = Join-Path $env:RUNNER_TEMP "v30-source-digests.json"
+          $digestPath = Join-Path $env:RUNNER_TEMP "v32-source-digests.json"
           $digests | ConvertTo-Json | Set-Content -Path $digestPath -Encoding UTF8
 
-      - name: Run committed V30 MT5 backtest
+      - name: Run committed V32 MT5 backtest
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-ea-v27-public-backtest.ps1
 
@@ -200,7 +210,7 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          $digestPath = Join-Path $env:RUNNER_TEMP "v30-source-digests.json"
+          $digestPath = Join-Path $env:RUNNER_TEMP "v32-source-digests.json"
           if (!(Test-Path $digestPath)) { throw "Initial source digest file is missing." }
           $expected = Get-Content $digestPath -Raw | ConvertFrom-Json
           $mutated = @()
@@ -210,8 +220,8 @@ jobs:
             $actual = (Get-FileHash -Algorithm SHA256 -Path $path).Hash
             if ($actual -ne [string]$property.Value) { $mutated += "$path ($($property.Value) -> $actual)" }
           }
-          if ($mutated.Count -gt 0) { throw "V30 source mutation detected: $($mutated -join '; ')" }
-          "V30_SOURCE_IMMUTABILITY=PASS"
+          if ($mutated.Count -gt 0) { throw "V32 source mutation detected: $($mutated -join '; ')" }
+          "V32_SOURCE_IMMUTABILITY=PASS"
 
       - name: Analyze results
         if: always()
@@ -219,9 +229,9 @@ jobs:
         run: |
           if (!(Test-Path reports)) { New-Item -ItemType Directory -Force -Path reports | Out-Null }
           python scripts/analyze-v27-results.py reports --deposit $env:BT_DEPOSIT |
-            Tee-Object -FilePath reports/V30_ANALYSIS_CONSOLE.json
+            Tee-Object -FilePath reports/V32_ANALYSIS_CONSOLE.json
 
-      - name: Export compact V30 summary
+      - name: Export compact V32 summary
         if: always()
         shell: pwsh
         run: |
@@ -235,14 +245,14 @@ jobs:
             $summary = "{0}-T{1}-PF{2}-WR{3}-NET{4}" -f $analysis.verdict,$trades,$pf,$wr,$net
             $summary = $summary -replace '[^A-Za-z0-9_.-]', '_'
           }
-          "V30_SUMMARY=$summary" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "V30 compact summary: $summary" | Tee-Object -FilePath reports/V30_COMPACT_SUMMARY.txt
+          "V32_SUMMARY=$summary" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "V32 compact summary: $summary" | Tee-Object -FilePath reports/V32_COMPACT_SUMMARY.txt
 
       - name: Upload artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: EA-V30-SYMMETRIC-${{ matrix.period }}-${{ matrix.chunk }}-${{ env.V30_SUMMARY }}-${{ github.run_number }}-${{ github.sha }}
+          name: EA-V32-PRUNED-${{ matrix.period }}-${{ matrix.chunk }}-${{ env.V32_SUMMARY }}-${{ github.run_number }}-${{ github.sha }}
           path: reports/**
           if-no-files-found: error
           retention-days: 14
