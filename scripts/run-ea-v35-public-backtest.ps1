@@ -1,6 +1,32 @@
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+function Replace-RequiredLiteral([string]$Text, [string]$Old, [string]$New, [string]$Label) {
+  if (!$Text.Contains($Old)) { throw "V35 runner lock failed: cannot find $Label." }
+  return $Text.Replace($Old, $New)
+}
+
+function Set-LockedInput([string]$Text, [string]$Name, [string]$Value) {
+  $pattern = '(?m)^\s*"' + [regex]::Escape($Name) + '=[^"]*",\s*$'
+  $replacement = '  "' + $Name + '=' + $Value + '",'
+  if ($Text -match $pattern) {
+    return [regex]::Replace($Text, $pattern, $replacement, 1)
+  }
+
+  $anchor = '(?m)^\s*"MaxTradesPerDay=1",\s*$'
+  if ($Name -eq 'MaxTradesPerWeek' -and $Text -match $anchor) {
+    return [regex]::Replace($Text, $anchor, "  \"MaxTradesPerDay=1\",`n  \"MaxTradesPerWeek=4\",", 1)
+  }
+
+  $anchor = '(?m)^\s*"UseBreakEven=true",\s*$'
+  if ($Name -in @('PipSize','MinTargetPips') -and $Text -match $anchor) {
+    $insert = if ($Name -eq 'PipSize') { "  \"PipSize=0.01\",`n  \"UseBreakEven=true\"," } else { "  \"MinTargetPips=400.0\",`n  \"UseBreakEven=true\"," }
+    return [regex]::Replace($Text, $anchor, $insert, 1)
+  }
+
+  throw "V35 runner lock failed: cannot lock tester input $Name."
+}
+
 $repo = (Resolve-Path ".").Path
 $sourceRunner = Join-Path $repo "scripts\run-ea-v27-public-backtest.ps1"
 if (!(Test-Path $sourceRunner)) { throw "Base public backtest runner missing: $sourceRunner" }
@@ -15,7 +41,7 @@ $replacements = [ordered]@{
   'V28_PUBLIC_BACKTEST_FALLBACK_REPORT.html' = 'V35_PUBLIC_BACKTEST_FALLBACK_REPORT.html'
   'V28 Core Edge Router MT5 Backtest' = 'V35 Sell Structure MT5 Backtest'
   'XAUUSD_V28_Core_Edge_Router' = 'XAUUSD_V35_Sell_Structure_Quality_Gate'
-  'effective_profile=V35_SELL_STRUCTURE.set' = 'effective_profile=V35_SELL_STRUCTURE.set'
+  'effective_profile=V28_CONTEXTUAL_RISK.set' = 'effective_profile=V35_SELL_STRUCTURE.set'
   'routes=CORE_PULLBACK_BUY_15|CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14' = 'routes=CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14'
   'Section "Compile importer and V28 EA"' = 'Section "Compile importer and V35 EA"'
   'Section "Create canonical V28 tester profile"' = 'Section "Create canonical V35 tester profile"'
@@ -29,16 +55,98 @@ $replacements = [ordered]@{
   'V28 backtest timed out after' = 'V35 backtest timed out after'
 }
 foreach ($entry in $replacements.GetEnumerator()) {
-  $text = $text.Replace([string]$entry.Key, [string]$entry.Value)
+  $text = Replace-RequiredLiteral $text ([string]$entry.Key) ([string]$entry.Value) ([string]$entry.Key)
 }
 
-$text = $text.Replace('$timeout = [Math]::Max(30, [Math]::Min(350, $timeout))', '$timeout = [Math]::Max(30, [Math]::Min(430, $timeout))')
-$text = $text.Replace('if ($text -match "XAU_PUBLIC|XAUUSD_V27|V28|Test passed|final balance|deal #|No money") {', 'if ($text -match "XAU_PUBLIC|XAUUSD_V27|V35|Test passed|final balance|deal #|No money") {')
+$text = Replace-RequiredLiteral $text '$timeout = [Math]::Max(30, [Math]::Min(350, $timeout))' '$timeout = [Math]::Max(30, [Math]::Min(430, $timeout))' 'timeout clamp'
+$text = Replace-RequiredLiteral $text 'if ($text -match "XAU_PUBLIC|XAUUSD_V27|V28|Test passed|final balance|deal #|No money") {' 'if ($text -match "XAU_PUBLIC|XAUUSD_V27|V35|Test passed|final balance|deal #|No money") {' 'tester log filter'
 
-if ($text -match 'CORE_PULLBACK_BUY_15') { throw 'V35 runner lock failed: forbidden CORE_PULLBACK_BUY_15 marker remains.' }
-if ($text -match 'V28_CONTEXTUAL_RISK\.set') { throw 'V35 runner lock failed: legacy V28 tester profile remains.' }
-if ($text -match 'RiskPercent=0\.20') { 'V35 runner risk lock confirmed: RiskPercent=0.20' | Write-Host } else { throw 'V35 runner risk lock missing.' }
-if ($text -notmatch 'V35_SELL_STRUCTURE\.set') { throw 'V35 runner profile lock missing.' }
+$lockedInputs = [ordered]@{
+  FixedLot = '0.02'
+  UseRiskPercent = 'true'
+  RiskPercent = '0.20'
+  UseEquityForRisk = 'true'
+  MaxRiskLot = '2.00'
+  MaxTradesPerDay = '1'
+  MaxTradesPerWeek = '4'
+  CooldownMinutes = '180'
+  LastEntryHour = '18'
+  LastEntryMinute = '30'
+  HardFlatHour = '20'
+  HardFlatMinute = '45'
+  BlockFridayLateEntries = 'true'
+  FridayLastEntryHour = '17'
+  CloseBeforeWeekend = 'true'
+  FridayCloseHour = '19'
+  EnableBuy = 'true'
+  EnableSell = 'true'
+  MinSignalScore = '91.0'
+  MinDirectionScoreGap = '10.0'
+  MinADX = '28.0'
+  MaxSpreadATRFraction = '0.045'
+  MinBodyRatio = '0.48'
+  MinVolumeRatio = '1.18'
+  BreakoutTP_ATR = '3.40'
+  BreakoutSL_ATR = '0.82'
+  PullbackTP_ATR = '3.20'
+  PullbackSL_ATR = '0.78'
+  ContinuationTP_ATR = '3.75'
+  ContinuationSL_ATR = '0.74'
+  SweepTP_ATR = '3.90'
+  SweepSL_ATR = '0.76'
+  PipSize = '0.01'
+  MinTargetPips = '400.0'
+  UseBreakEven = 'true'
+  BreakEvenTriggerATR = '0.90'
+  BreakEvenOffsetATR = '0.03'
+  UseTrailingStop = 'true'
+  TrailStartATR = '2.75'
+  TrailDistanceATR = '1.10'
+  MaxHoldBars = '28'
+  TimeExitMinProgressATR = '0.45'
+  UseCSVJournal = 'true'
+  CSVJournalName = 'V35_SELL_STRUCTURE_journal.csv'
+}
+foreach ($entry in $lockedInputs.GetEnumerator()) {
+  $text = Set-LockedInput $text ([string]$entry.Key) ([string]$entry.Value)
+}
+
+$required = @(
+  'V35_SELL_STRUCTURE.set',
+  'RiskPercent=0.20',
+  'MaxTradesPerDay=1',
+  'MaxTradesPerWeek=4',
+  'MinSignalScore=91.0',
+  'MinADX=28.0',
+  'MaxSpreadATRFraction=0.045',
+  'MinBodyRatio=0.48',
+  'MinVolumeRatio=1.18',
+  'ContinuationTP_ATR=3.75',
+  'ContinuationSL_ATR=0.74',
+  'SweepTP_ATR=3.90',
+  'SweepSL_ATR=0.76',
+  'PipSize=0.01',
+  'MinTargetPips=400.0',
+  'CSVJournalName=V35_SELL_STRUCTURE_journal.csv',
+  'routes=CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14'
+)
+foreach ($marker in $required) {
+  if (!$text.Contains($marker)) { throw "V35 runner lock failed: required marker missing: $marker" }
+}
+
+$forbidden = @(
+  'CORE_PULLBACK_BUY_15',
+  'V28_CONTEXTUAL_RISK.set',
+  'MaxTradesPerDay=4',
+  'MinSignalScore=78.0',
+  'MinADX=20.0',
+  'BreakoutTP_ATR=1.55',
+  'ContinuationTP_ATR=1.30',
+  'SweepTP_ATR=1.45'
+)
+foreach ($marker in $forbidden) {
+  if ($text.Contains($marker)) { throw "V35 runner lock failed: forbidden stale marker remains: $marker" }
+}
 
 Set-Content -Path $patchedRunner -Value $text -Encoding UTF8
 & pwsh -NoProfile -ExecutionPolicy Bypass -File $patchedRunner
