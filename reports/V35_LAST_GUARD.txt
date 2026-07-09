@@ -1,0 +1,1 @@
+Last guard: reject V35 unless all four period artifacts validate the objective.

@@ -1,0 +1,11 @@
+V35 branch is ready for pull-request validation.
+
+Policy:
+- V34 rejected.
+- V35 removes CORE_PULLBACK_BUY_15.
+- V35 keeps only CORE_CONTINUATION_SELL_07_08 and CORE_SWEEP_SELL_13_14.
+- Risk remains 0.20%.
+- MinTargetPips remains 400.0.
+- MaxTradesPerWeek remains 4.
+- Zero overnight remains required.
+- No forced trades.

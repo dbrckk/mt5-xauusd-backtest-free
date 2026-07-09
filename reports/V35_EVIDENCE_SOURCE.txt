@@ -1,0 +1,7 @@
+V35 evidence source:
+
+Based on V34 run #124 artifacts:
+- Y0_OOS artifact 8187369897
+- Y1 artifact 8187343241
+- Y2 artifact 8200085969
+- Y3 artifact 8199181350 / 8192993722 showed DATA_QUALITY_UNKNOWN with cancelled committed backtest path.

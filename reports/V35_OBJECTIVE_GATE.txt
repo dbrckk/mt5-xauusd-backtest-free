@@ -1,0 +1,10 @@
+V35 objective gate:
+
+Reject unless all four periods Y0_OOS/Y1/Y2/Y3 pass data quality, source immutability, compile/backtest execution, zero overnight, no forced trades, no data/source mutation, no weak route reintroduction, and objective metrics.
+
+Objective metrics:
+- 1 to 4 trades/week evaluated honestly.
+- Win rate above 80% only if out-of-sample validated.
+- Target profit around 400 pips or more where structure supports it.
+- Smaller controlled losses.
+- Risk <= 0.20%.
