@@ -198,6 +198,8 @@ jobs:
       - name: Capture committed source digests
         shell: pwsh
         run: |
+          # Cache restore may fail transiently on GitHub-hosted Windows runners; validation must continue
+          # because the public-history downloader and data-quality gates decide whether a period is usable.
           $paths = @(
             "MQL5/Experts/XAUUSD_V27_Clean_MultiSetup.mq5",
             "MQL5/Experts/ImportCustomRatesEA.mq5",
