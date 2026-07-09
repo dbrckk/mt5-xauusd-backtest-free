@@ -1,0 +1,4 @@
+Risk policy for V35:
+
+RiskPercent must remain 0.20.
+No branch in this validation chain may increase risk unless the user explicitly changes risk policy.
