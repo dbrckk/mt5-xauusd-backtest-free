@@ -24,11 +24,13 @@ on:
     branches:
       - main
       - v35-sell-only-structure-validation
+      - v36-v35-runner-input-lock
     paths:
       - ".github/workflows/ea-v26-3y.yml"
       - "MQL5/Experts/XAUUSD_V27_Clean_MultiSetup.mq5"
       - "MQL5/Experts/ImportCustomRatesEA.mq5"
       - "scripts/run-ea-v27-public-backtest.ps1"
+      - "scripts/run-ea-v35-public-backtest.ps1"
       - "scripts/download_public_xau_m1.py"
       - "scripts/analyze-v27-results.py"
       - "scripts/apply-v32-prune-edge.ps1"
@@ -41,6 +43,7 @@ on:
       - "MQL5/Experts/XAUUSD_V27_Clean_MultiSetup.mq5"
       - "MQL5/Experts/ImportCustomRatesEA.mq5"
       - "scripts/run-ea-v27-public-backtest.ps1"
+      - "scripts/run-ea-v35-public-backtest.ps1"
       - "scripts/download_public_xau_m1.py"
       - "scripts/analyze-v27-results.py"
       - "scripts/apply-v32-prune-edge.ps1"
@@ -182,7 +185,7 @@ jobs:
         continue-on-error: true
         with:
           path: .cache/dukascopy
-          key: dukascopy-xau-v35-sell-structure-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-v2
+          key: dukascopy-xau-v35-sell-structure-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-v3
           restore-keys: |
             dukascopy-xau-v35-sell-structure-${{ matrix.chunk }}-
             dukascopy-xau-v35-sell-structure-
@@ -204,6 +207,7 @@ jobs:
             "MQL5/Experts/XAUUSD_V27_Clean_MultiSetup.mq5",
             "MQL5/Experts/ImportCustomRatesEA.mq5",
             "scripts/run-ea-v27-public-backtest.ps1",
+            "scripts/run-ea-v35-public-backtest.ps1",
             "scripts/download_public_xau_m1.py",
             "scripts/analyze-v27-results.py",
             "scripts/apply-v32-prune-edge.ps1",
@@ -220,7 +224,7 @@ jobs:
 
       - name: Run committed V35 MT5 backtest
         shell: pwsh
-        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-ea-v27-public-backtest.ps1
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-ea-v35-public-backtest.ps1
 
       - name: Verify source immutability
         if: always()
