@@ -1,0 +1,1 @@
+Do not merge before Y3 produces a valid, non-cancelled artifact.
