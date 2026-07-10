@@ -13,7 +13,13 @@ function Set-LockedInput([string]$Text, [string]$Name, [string]$Value) {
     return [regex]::Replace($Text, $pattern, $replacement, 1)
   }
 
-  $terminalPattern = '(?m)^\s*"' + [regex]::Escape($Name) + '=[^"]*"\s*
+  $terminalPattern = '(?m)^\s*"' + [regex]::Escape($Name) + '=[^"]*"\s*$'
+  $terminalReplacement = '  "' + $Name + '=' + $Value + '"'
+  if ($Text -match $terminalPattern) {
+    return [regex]::Replace($Text, $terminalPattern, $terminalReplacement, 1)
+  }
+
+  $anchor = '(?m)^\s*"MaxTradesPerDay=1",\s*$'
   if ($Name -eq 'MaxTradesPerWeek' -and $Text -match $anchor) {
     $insert = '  "MaxTradesPerDay=1",' + "`n" + '  "MaxTradesPerWeek=4",'
     return [regex]::Replace($Text, $anchor, $insert, 1)
