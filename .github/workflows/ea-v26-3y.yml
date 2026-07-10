@@ -185,7 +185,7 @@ jobs:
         continue-on-error: true
         with:
           path: .cache/dukascopy
-          key: dukascopy-xau-v35-sell-structure-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-v3
+          key: dukascopy-xau-v35-sell-structure-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-v4
           restore-keys: |
             dukascopy-xau-v35-sell-structure-${{ matrix.chunk }}-
             dukascopy-xau-v35-sell-structure-
@@ -193,10 +193,6 @@ jobs:
             dukascopy-xau-v34-balanced-
             dukascopy-xau-v33-sniper-400-${{ matrix.chunk }}-
             dukascopy-xau-v33-sniper-400-
-            dukascopy-xau-v32-pruned-${{ matrix.chunk }}-
-            dukascopy-xau-v32-pruned-
-            dukascopy-xau-v30-symmetric-${{ matrix.chunk }}-
-            dukascopy-xau-v28-${{ matrix.chunk }}-
 
       - name: Capture committed source digests
         shell: pwsh
