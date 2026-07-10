@@ -15,12 +15,17 @@ function Set-LockedInput([string]$Text, [string]$Name, [string]$Value) {
 
   $anchor = '(?m)^\s*"MaxTradesPerDay=1",\s*$'
   if ($Name -eq 'MaxTradesPerWeek' -and $Text -match $anchor) {
-    return [regex]::Replace($Text, $anchor, "  \"MaxTradesPerDay=1\",`n  \"MaxTradesPerWeek=4\",", 1)
+    $insert = '  "MaxTradesPerDay=1",' + "`n" + '  "MaxTradesPerWeek=4",'
+    return [regex]::Replace($Text, $anchor, $insert, 1)
   }
 
   $anchor = '(?m)^\s*"UseBreakEven=true",\s*$'
   if ($Name -in @('PipSize','MinTargetPips') -and $Text -match $anchor) {
-    $insert = if ($Name -eq 'PipSize') { "  \"PipSize=0.01\",`n  \"UseBreakEven=true\"," } else { "  \"MinTargetPips=400.0\",`n  \"UseBreakEven=true\"," }
+    $insert = if ($Name -eq 'PipSize') {
+      '  "PipSize=0.01",' + "`n" + '  "UseBreakEven=true",'
+    } else {
+      '  "MinTargetPips=400.0",' + "`n" + '  "UseBreakEven=true",'
+    }
     return [regex]::Replace($Text, $anchor, $insert, 1)
   }
 
