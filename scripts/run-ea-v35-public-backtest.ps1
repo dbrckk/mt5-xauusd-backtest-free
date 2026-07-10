@@ -33,6 +33,9 @@ function Set-LockedInput([string]$Text, [string]$Name, [string]$Value) {
 }
 
 $repo = (Resolve-Path ".").Path
+$reportsRoot = Join-Path $repo "reports"
+New-Item -ItemType Directory -Force -Path $reportsRoot | Out-Null
+
 $sourceRunner = Join-Path $repo "scripts\run-ea-v27-public-backtest.ps1"
 if (!(Test-Path $sourceRunner)) { throw "Base public backtest runner missing: $sourceRunner" }
 
@@ -154,5 +157,20 @@ foreach ($marker in $forbidden) {
 }
 
 Set-Content -Path $patchedRunner -Value $text -Encoding UTF8
-& pwsh -NoProfile -ExecutionPolicy Bypass -File $patchedRunner
-exit $LASTEXITCODE
+Copy-Item $patchedRunner (Join-Path $reportsRoot "V35_LOCKED_RUNNER_PREVIEW.ps1") -Force
+
+$consolePath = Join-Path $reportsRoot "V35_LOCKED_RUNNER_CONSOLE.log"
+try {
+  & pwsh -NoProfile -ExecutionPolicy Bypass -File $patchedRunner *>&1 |
+    Tee-Object -FilePath $consolePath
+  $code = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+  "exit_code=$code" | Set-Content -Path (Join-Path $reportsRoot "V35_LOCKED_RUNNER_EXIT_CODE.txt") -Encoding UTF8
+  if ($code -ne 0) {
+    throw "V35 locked runner exited with code $code. See reports/V35_LOCKED_RUNNER_CONSOLE.log."
+  }
+} catch {
+  $_ | Out-String | Set-Content -Path (Join-Path $reportsRoot "V35_LOCKED_RUNNER_ERROR.txt") -Encoding UTF8
+  throw
+}
+
+exit 0
