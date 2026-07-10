@@ -59,7 +59,6 @@ try {
     'V28_PUBLIC_BACKTEST_FALLBACK_REPORT.html' = 'V35_PUBLIC_BACKTEST_FALLBACK_REPORT.html'
     'V28 Core Edge Router MT5 Backtest' = 'V35 Sell Structure MT5 Backtest'
     'XAUUSD_V28_Core_Edge_Router' = 'XAUUSD_V35_Sell_Structure_Quality_Gate'
-    'effective_profile=V28_CONTEXTUAL_RISK.set' = 'effective_profile=V35_SELL_STRUCTURE.set'
     'routes=CORE_PULLBACK_BUY_15|CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14' = 'routes=CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14'
     'Section "Compile importer and V28 EA"' = 'Section "Compile importer and V35 EA"'
     'Section "Create canonical V28 tester profile"' = 'Section "Create canonical V35 tester profile"'
@@ -148,7 +147,8 @@ try {
     'PipSize=0.01',
     'MinTargetPips=400.0',
     'CSVJournalName=V35_SELL_STRUCTURE_journal.csv',
-    'routes=CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14'
+    'routes=CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14',
+    'effective_profile=V35_SELL_STRUCTURE.set'
   )
   foreach ($marker in $required) {
     if (!$text.Contains($marker)) { throw "V35 runner lock failed: required marker missing: $marker" }
