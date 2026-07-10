@@ -39,9 +39,6 @@ $replacements = [ordered]@{
   "'MaxSpreadATRFraction=0.045'" = "'MaxSpreadATRFraction=0.050'"
   "'MinBodyRatio=0.48'" = "'MinBodyRatio=0.42'"
   "'MinVolumeRatio=1.18'" = "'MinVolumeRatio=1.10'"
-  'CSVJournalName = ''V35_SELL_STRUCTURE_journal.csv''' = 'CSVJournalName = ''V37_GEOMETRY_REGIME_journal.csv'''
-  "'CSVJournalName=V35_SELL_STRUCTURE_journal.csv'" = "'CSVJournalName=V37_GEOMETRY_REGIME_journal.csv'"
-  "'effective_profile=V35_SELL_STRUCTURE.set'" = "'effective_profile=V37_GEOMETRY_REGIME.set'"
 }
 
 foreach ($entry in $replacements.GetEnumerator()) {
