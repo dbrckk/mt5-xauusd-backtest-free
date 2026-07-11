@@ -32,7 +32,6 @@ $replacements = [ordered]@{
   'V35 EA' = 'V37 EA'
   'V35 Strategy Tester' = 'V37 Strategy Tester'
   'V35_${symbol}_${period}_${from}_${to}_model${model}' = 'V37_${symbol}_${period}_${from}_${to}_model${model}'
-  'download_public_xau_m1.py' = 'download_public_xau_m1_bounded.py'
   "MinSignalScore = '91.0'" = "MinSignalScore = '88.0'"
   "MinADX = '28.0'" = "MinADX = '25.0'"
   "MaxSpreadATRFraction = '0.045'" = "MaxSpreadATRFraction = '0.050'"
@@ -52,6 +51,19 @@ foreach ($entry in $replacements.GetEnumerator()) {
   $text = $text.Replace([string]$entry.Key, [string]$entry.Value)
 }
 
+# V35 is itself a locked wrapper around the V27 runner. Inject the bounded
+# downloader replacement into that inner transform rather than looking for the
+# downloader marker in the outer V35 source, where it does not exist.
+$anchor = '  Write-Stage "literal-replacements-complete"'
+if (!$text.Contains($anchor)) {
+  throw "V37 wrapper transform missing V35 downloader injection anchor"
+}
+$injection = @'
+  $text = Replace-RequiredLiteral $text 'download_public_xau_m1.py' 'download_public_xau_m1_bounded.py' 'bounded public downloader'
+  Write-Stage "literal-replacements-complete"
+'@
+$text = $text.Replace($anchor, $injection.TrimEnd())
+
 $required = @(
   'V37_GEOMETRY_REGIME.set',
   'download_public_xau_m1_bounded.py',
@@ -67,7 +79,7 @@ foreach ($marker in $required) {
   if (!$text.Contains($marker)) { throw "V37 runner marker missing: $marker" }
 }
 
-$forbidden = @('V35_SELL_STRUCTURE.set','download_public_xau_m1.py','MinSignalScore=91.0','MinADX=28.0','MaxSpreadATRFraction=0.045','MinBodyRatio=0.48','MinVolumeRatio=1.18')
+$forbidden = @('V35_SELL_STRUCTURE.set','MinSignalScore=91.0','MinADX=28.0','MaxSpreadATRFraction=0.045','MinBodyRatio=0.48','MinVolumeRatio=1.18')
 foreach ($marker in $forbidden) {
   if ($text.Contains($marker)) { throw "V37 runner stale marker remains: $marker" }
 }
