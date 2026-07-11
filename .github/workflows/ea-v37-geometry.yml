@@ -14,6 +14,7 @@ on:
       - "scripts/run-ea-v35-public-backtest.ps1"
       - "scripts/run-ea-v37-public-backtest.ps1"
       - "scripts/download_public_xau_m1.py"
+      - "scripts/download_public_xau_m1_bounded.py"
       - "scripts/analyze-v27-results.py"
       - "scripts/apply-v32-prune-edge.ps1"
       - "scripts/apply-v34-sniper-balanced.ps1"
@@ -29,6 +30,7 @@ on:
       - "scripts/run-ea-v35-public-backtest.ps1"
       - "scripts/run-ea-v37-public-backtest.ps1"
       - "scripts/download_public_xau_m1.py"
+      - "scripts/download_public_xau_m1_bounded.py"
       - "scripts/analyze-v27-results.py"
       - "scripts/apply-v32-prune-edge.ps1"
       - "scripts/apply-v34-sniper-balanced.ps1"
@@ -139,7 +141,8 @@ jobs:
             "routes=CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14",
             "pipeline_budget_minutes=355",
             "download_budget_seconds=9000",
-            "tester_budget_minutes=180"
+            "tester_budget_minutes=180",
+            "bounded_downloader=true"
           ) | Set-Content reports/V37_SOURCE_IDENTITY.txt -Encoding UTF8
 
       - name: Cache Dukascopy public XAU history
@@ -164,6 +167,7 @@ jobs:
             "scripts/run-ea-v35-public-backtest.ps1",
             "scripts/run-ea-v37-public-backtest.ps1",
             "scripts/download_public_xau_m1.py",
+            "scripts/download_public_xau_m1_bounded.py",
             "scripts/analyze-v27-results.py",
             "scripts/apply-v37-geometry-regime.ps1"
           )
