@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - v37-geometry-regime-validation
+      - v38-validation-pipeline-recovery
     paths:
       - ".github/workflows/ea-v37-geometry.yml"
       - "MQL5/Experts/XAUUSD_V27_Clean_MultiSetup.mq5"
@@ -39,17 +39,17 @@ permissions:
   contents: read
 
 concurrency:
-  group: v37-geometry-${{ github.ref }}-${{ github.event_name }}
+  group: v38-pipeline-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
   validate:
     name: validate (${{ matrix.chunk }}, M15, ${{ matrix.from_date }}, ${{ matrix.to_date }})
     runs-on: windows-latest
-    timeout-minutes: 500
+    timeout-minutes: 355
     strategy:
       fail-fast: false
-      max-parallel: 1
+      max-parallel: 4
       matrix:
         include:
           - chunk: Y0_OOS
@@ -73,12 +73,12 @@ jobs:
       BT_DEPOSIT: "15000"
       BT_LEVERAGE: "1:100"
       BT_MODEL: "0"
-      BT_TIMEOUT_MINUTES: "430"
-      PUBLIC_FETCH_TIMEOUT_SECONDS: "60"
-      PUBLIC_FETCH_RETRIES: "8"
-      PUBLIC_FETCH_RETRY_ROUNDS: "5"
-      PUBLIC_FETCH_WORKERS: "4"
-      PUBLIC_MAX_DOWNLOAD_SECONDS: "18000"
+      BT_TIMEOUT_MINUTES: "180"
+      PUBLIC_FETCH_TIMEOUT_SECONDS: "30"
+      PUBLIC_FETCH_RETRIES: "5"
+      PUBLIC_FETCH_RETRY_ROUNDS: "3"
+      PUBLIC_FETCH_WORKERS: "12"
+      PUBLIC_MAX_DOWNLOAD_SECONDS: "9000"
       PUBLIC_MAX_HISTORY_DAYS: "370"
       PUBLIC_MIN_REQUIRED_BARS: "250000"
       PUBLIC_MIN_REQUIRED_DAYS_WITH_TICKS: "220"
@@ -136,7 +136,10 @@ jobs:
             "min_target_pips=400",
             "strict_intraday=true",
             "forced_trades=false",
-            "routes=CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14"
+            "routes=CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14",
+            "pipeline_budget_minutes=355",
+            "download_budget_seconds=9000",
+            "tester_budget_minutes=180"
           ) | Set-Content reports/V37_SOURCE_IDENTITY.txt -Encoding UTF8
 
       - name: Cache Dukascopy public XAU history
@@ -144,8 +147,9 @@ jobs:
         continue-on-error: true
         with:
           path: .cache/dukascopy
-          key: dukascopy-xau-v37-geometry-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-v1
+          key: dukascopy-xau-v38-recovery-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-v1
           restore-keys: |
+            dukascopy-xau-v38-recovery-${{ matrix.chunk }}-
             dukascopy-xau-v37-geometry-${{ matrix.chunk }}-
             dukascopy-xau-v35-sell-structure-${{ matrix.chunk }}-
             dukascopy-xau-v34-balanced-${{ matrix.chunk }}-
@@ -217,7 +221,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: EA-V37-GEOMETRY-${{ matrix.chunk }}-${{ env.V37_SUMMARY }}-${{ github.run_number }}-${{ github.sha }}
+          name: EA-V37-RECOVERY-${{ matrix.chunk }}-${{ env.V37_SUMMARY }}-${{ github.run_number }}-${{ github.sha }}
           path: reports/**
           if-no-files-found: error
           retention-days: 14
