@@ -142,16 +142,19 @@ jobs:
             "pipeline_budget_minutes=355",
             "download_budget_seconds=9000",
             "tester_budget_minutes=180",
-            "bounded_downloader=true"
+            "bounded_downloader=true",
+            "partial_cache_persistence=true"
           ) | Set-Content reports/V37_SOURCE_IDENTITY.txt -Encoding UTF8
 
-      - name: Cache Dukascopy public XAU history
-        uses: actions/cache@v4
+      - name: Restore Dukascopy public XAU history
+        id: dukascopy-cache-restore
+        uses: actions/cache/restore@v4
         continue-on-error: true
         with:
           path: .cache/dukascopy
-          key: dukascopy-xau-v38-recovery-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-v1
+          key: dukascopy-xau-v38-recovery-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
+            dukascopy-xau-v38-recovery-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-
             dukascopy-xau-v38-recovery-${{ matrix.chunk }}-
             dukascopy-xau-v37-geometry-${{ matrix.chunk }}-
             dukascopy-xau-v35-sell-structure-${{ matrix.chunk }}-
@@ -181,6 +184,14 @@ jobs:
       - name: Run committed V37 MT5 backtest
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-ea-v37-public-backtest.ps1
+
+      - name: Save cumulative Dukascopy cache
+        if: always()
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: .cache/dukascopy
+          key: dukascopy-xau-v38-recovery-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Verify source immutability
         if: always()
