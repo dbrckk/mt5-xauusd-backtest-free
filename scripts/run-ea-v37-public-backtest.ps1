@@ -8,6 +8,9 @@ New-Item -ItemType Directory -Force -Path $reports | Out-Null
 $source = Join-Path $repo "scripts\run-ea-v35-public-backtest.ps1"
 if (!(Test-Path $source)) { throw "V35 locked runner missing: $source" }
 
+$boundedDownloader = Join-Path $repo "scripts\download_public_xau_m1_bounded.py"
+if (!(Test-Path $boundedDownloader)) { throw "Bounded public downloader missing: $boundedDownloader" }
+
 $text = Get-Content -Path $source -Raw -Encoding UTF8
 $replacements = [ordered]@{
   'V35_SELL_STRUCTURE.set' = 'V37_GEOMETRY_REGIME.set'
@@ -29,6 +32,7 @@ $replacements = [ordered]@{
   'V35 EA' = 'V37 EA'
   'V35 Strategy Tester' = 'V37 Strategy Tester'
   'V35_${symbol}_${period}_${from}_${to}_model${model}' = 'V37_${symbol}_${period}_${from}_${to}_model${model}'
+  'download_public_xau_m1.py' = 'download_public_xau_m1_bounded.py'
   "MinSignalScore = '91.0'" = "MinSignalScore = '88.0'"
   "MinADX = '28.0'" = "MinADX = '25.0'"
   "MaxSpreadATRFraction = '0.045'" = "MaxSpreadATRFraction = '0.050'"
@@ -50,6 +54,7 @@ foreach ($entry in $replacements.GetEnumerator()) {
 
 $required = @(
   'V37_GEOMETRY_REGIME.set',
+  'download_public_xau_m1_bounded.py',
   "MinSignalScore = '88.0'",
   "MinADX = '25.0'",
   "MaxSpreadATRFraction = '0.050'",
@@ -62,7 +67,7 @@ foreach ($marker in $required) {
   if (!$text.Contains($marker)) { throw "V37 runner marker missing: $marker" }
 }
 
-$forbidden = @('V35_SELL_STRUCTURE.set','MinSignalScore=91.0','MinADX=28.0','MaxSpreadATRFraction=0.045','MinBodyRatio=0.48','MinVolumeRatio=1.18')
+$forbidden = @('V35_SELL_STRUCTURE.set','download_public_xau_m1.py','MinSignalScore=91.0','MinADX=28.0','MaxSpreadATRFraction=0.045','MinBodyRatio=0.48','MinVolumeRatio=1.18')
 foreach ($marker in $forbidden) {
   if ($text.Contains($marker)) { throw "V37 runner stale marker remains: $marker" }
 }
