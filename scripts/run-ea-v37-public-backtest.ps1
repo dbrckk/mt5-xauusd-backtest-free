@@ -39,7 +39,6 @@ $replacements = [ordered]@{
   "MinVolumeRatio = '1.18'" = "MinVolumeRatio = '0.80'"
   "ContinuationTP_ATR = '3.75'" = "ContinuationTP_ATR = '4.20'"
   "ContinuationSL_ATR = '0.74'" = "ContinuationSL_ATR = '0.66'"
-  "BreakEvenTriggerATR = '0.90'" = "BreakEvenTriggerATR = '1.15'"
   "TrailStartATR = '2.75'" = "TrailStartATR = '3.00'"
   "TrailDistanceATR = '1.10'" = "TrailDistanceATR = '1.20'"
   "MaxHoldBars = '28'" = "MaxHoldBars = '24'"
@@ -51,7 +50,6 @@ $replacements = [ordered]@{
   "'MinVolumeRatio=1.18'" = "'MinVolumeRatio=0.80'"
   "'ContinuationTP_ATR=3.75'" = "'ContinuationTP_ATR=4.20'"
   "'ContinuationSL_ATR=0.74'" = "'ContinuationSL_ATR=0.66'"
-  "'BreakEvenTriggerATR=0.90'" = "'BreakEvenTriggerATR=1.15'"
   "'TrailStartATR=2.75'" = "'TrailStartATR=3.00'"
   "'TrailDistanceATR=1.10'" = "'TrailDistanceATR=1.20'"
   "'MaxHoldBars=28'" = "'MaxHoldBars=24'"
@@ -64,6 +62,16 @@ foreach ($entry in $replacements.GetEnumerator()) {
   }
   $text = $text.Replace([string]$entry.Key, [string]$entry.Value)
 }
+
+# Break-even is intentionally patched with an anchored regex rather than two brittle
+# literal replacements. This changes the locked-input assignment itself; the generated
+# runner therefore receives the V40 value without depending on formatting in the V35
+# validation-marker list.
+$breakEvenPattern = "(?m)^(\s*BreakEvenTriggerATR\s*=\s*)'0\.90'(\s*)$"
+if ($text -notmatch $breakEvenPattern) {
+  throw "V40 wrapper transform missing BreakEvenTriggerATR locked-input assignment"
+}
+$text = [regex]::Replace($text, $breakEvenPattern, '${1}''1.15''${2}', 1)
 
 $anchor = '  Write-Stage "literal-replacements-complete"'
 if (!$text.Contains($anchor)) {
@@ -85,6 +93,11 @@ $required = @(
   "MinVolumeRatio = '0.80'",
   "ContinuationTP_ATR = '4.20'",
   "ContinuationSL_ATR = '0.66'",
+  "BreakEvenTriggerATR = '1.15'",
+  "TrailStartATR = '3.00'",
+  "TrailDistanceATR = '1.20'",
+  "MaxHoldBars = '24'",
+  "TimeExitMinProgressATR = '0.30'",
   "CSVJournalName = 'V40_H8_CONTINUATION_journal.csv'",
   "'effective_profile=V40_H8_CONTINUATION.set'"
 )
@@ -92,7 +105,7 @@ foreach ($marker in $required) {
   if (!$text.Contains($marker)) { throw "V40 runner marker missing: $marker" }
 }
 
-$forbidden = @('V35_SELL_STRUCTURE.set','V37_GEOMETRY_REGIME.set','V39_STRUCTURE_IMPULSE.set','MinSignalScore=91.0','MinSignalScore=88.0','MinSignalScore=76.0','MinADX=28.0','MinADX=25.0','MinADX=16.0','MaxSpreadATRFraction=0.045','MaxSpreadATRFraction=0.050','MaxSpreadATRFraction=0.070','MinBodyRatio=0.48','MinBodyRatio=0.42','MinBodyRatio=0.18','MinVolumeRatio=1.18','MinVolumeRatio=1.10','MinVolumeRatio=0.75')
+$forbidden = @('V35_SELL_STRUCTURE.set','V37_GEOMETRY_REGIME.set','V39_STRUCTURE_IMPULSE.set','MinSignalScore=91.0','MinSignalScore=88.0','MinSignalScore=76.0','MinADX=28.0','MinADX=25.0','MinADX=16.0','MaxSpreadATRFraction=0.045','MaxSpreadATRFraction=0.050','MaxSpreadATRFraction=0.070','MinBodyRatio=0.48','MinBodyRatio=0.42','MinBodyRatio=0.18','MinVolumeRatio=1.18','MinVolumeRatio=1.10','MinVolumeRatio=0.75',"BreakEvenTriggerATR = '0.90'")
 foreach ($marker in $forbidden) {
   if ($text.Contains($marker)) { throw "V40 runner stale marker remains: $marker" }
 }
