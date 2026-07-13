@@ -9,9 +9,9 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/apply-v35-sell-structure.p
 $ea = Get-Content $eaPath -Raw
 
 # Identity.
-$ea = $ea.Replace('#property version "2.94"', '#property version "3.00"')
-$ea = $ea.Replace('V35 Sell Structure Quality Gate: weak pullback route pruned', 'V42 Hour-8 Break-Retest State Machine: supported cell only')
-$ea = $ea.Replace('input string CSVJournalName="V35_SELL_STRUCTURE_journal.csv";', 'input string CSVJournalName="V42_H8_STATE_MACHINE_journal.csv";')
+$ea = $ea.Replace('#property version "2.94"', '#property version "3.01"')
+$ea = $ea.Replace('V35 Sell Structure Quality Gate: weak pullback route pruned', 'V43 Hour-8 Direct Break Impulse State: supported cell only')
+$ea = $ea.Replace('input string CSVJournalName="V35_SELL_STRUCTURE_journal.csv";', 'input string CSVJournalName="V43_H8_DIRECT_BREAK_journal.csv";')
 
 # Keep only the independently supported continuation cell at hour 08.
 $routeOld = @'
@@ -33,7 +33,7 @@ $routeNew = @'
       return true;
    }
 '@
-if (!$ea.Contains($routeOld)) { throw "V42 cannot find V35 sell route block." }
+if (!$ea.Contains($routeOld)) { throw "V43 cannot find V35 sell route block." }
 $ea = $ea.Replace($routeOld, $routeNew)
 
 $routeQualityV35 = @'
@@ -54,7 +54,7 @@ bool RouteQuality(string setup,int dir,double rsi,double adx,double volumeRatio,
    return false;
 }
 '@
-$routeQualityV42 = @'
+$routeQualityV43 = @'
 bool RouteQuality(string setup,int dir,double rsi,double adx,double volumeRatio,double bodyRatio,int h1Bias,int h4Bias)
 {
    if(dir>=0 || setup!="CONTINUATION")
@@ -67,10 +67,10 @@ bool RouteQuality(string setup,int dir,double rsi,double adx,double volumeRatio,
    return rsi>=26 && rsi<=60 && adx>=15 && volumeRatio>=0.65 && bodyRatio>=0.12;
 }
 '@
-if (!$ea.Contains($routeQualityV35)) { throw "V42 cannot find V35 RouteQuality block." }
-$ea = $ea.Replace($routeQualityV35, $routeQualityV42)
+if (!$ea.Contains($routeQualityV35)) { throw "V43 cannot find V35 RouteQuality block." }
+$ea = $ea.Replace($routeQualityV35, $routeQualityV43)
 
-# Preserve the V41 scalar opportunity envelope and V40 exits; isolate architecture as the only experiment.
+# Preserve the V41 scalar opportunity envelope and V40 exits; isolate entry architecture.
 $ea = $ea.Replace('input double MinSignalScore=91.0;', 'input double MinSignalScore=68.0;')
 $ea = $ea.Replace('input double MinADX=28.0;', 'input double MinADX=15.0;')
 $ea = $ea.Replace('input double MaxSpreadATRFraction=0.045;', 'input double MaxSpreadATRFraction=0.075;')
@@ -87,15 +87,14 @@ $ea = $ea.Replace('input double TimeExitMinProgressATR=0.45;', 'input double Tim
 $globalAnchor = 'double activeRisk=0.0;'
 $globalState = @'
 double activeRisk=0.0;
-int h8State=0;
 int h8StateDay=-1;
+bool h8EntryConsumed=false;
 double h8ReferenceLow=0.0;
-datetime h8BreakBarTime=0;
 '@
-if (!$ea.Contains($globalAnchor)) { throw "V42 cannot find global state anchor." }
+if (!$ea.Contains($globalAnchor)) { throw "V43 cannot find global state anchor." }
 $ea = $ea.Replace($globalAnchor, $globalState.TrimEnd())
 
-# Insert state logic only after HTF bias variables exist. This avoids compile-time use-before-declaration.
+# Direct hour-8 break/impulse state: no mandatory retest after V42 rejection.
 $biasAnchor = @'
    int h1Bias=Bias(PERIOD_H1);
    int h4Bias=Bias(PERIOD_H4);
@@ -114,79 +113,61 @@ $stateLines = @'
    if(stateDay!=h8StateDay)
    {
       h8StateDay=stateDay;
-      h8State=0;
-      h8ReferenceLow=0.0;
-      h8BreakBarTime=0;
-   }
-
-   bool setupWindow=(stateClock.hour==7 && stateClock.min>=45) || stateClock.hour==8;
-   if(!setupWindow && h8State!=3)
-   {
-      h8State=0;
-      h8ReferenceLow=0.0;
-      h8BreakBarTime=0;
-   }
-
-   if(h8State==0 && setupWindow && bearishState && h1Bias<0 && h4Bias<=0)
-   {
-      h8State=1;
+      h8EntryConsumed=false;
       h8ReferenceLow=recentLow;
    }
 
-   bool structureBreak=(h8State==1 && stateClock.hour==8 && rates[1].low<h8ReferenceLow && rates[1].close<=h8ReferenceLow-atr*0.02);
-   if(structureBreak)
-   {
-      h8State=2;
-      h8BreakBarTime=rates[1].time;
-   }
+   if(stateClock.hour==7 && stateClock.min>=45 && bearishState && h1Bias<0 && h4Bias<=0)
+      h8ReferenceLow=MathMin(h8ReferenceLow,recentLow);
 
-   bool boundedRetest=(h8State==2 && rates[1].time>h8BreakBarTime && rates[1].time-h8BreakBarTime<=45*60);
-   bool retestTouch=(rates[1].high>=h8ReferenceLow-atr*0.12);
-   bool bearishRejection=(rates[1].close<h8ReferenceLow && rates[1].close<rates[1].open && closeLocation<=0.60 && bearishDisplacement>=0.02);
-   bool h8StateTrigger=(boundedRetest && retestTouch && bearishRejection && bearishState);
+   bool directStructureBreak=(stateClock.hour==8 && rates[1].close<h8ReferenceLow-atr*0.01);
+   bool bearishExpansion=(stateClock.hour==8 && bearishDisplacement>=0.08 && closeLocation<=0.45 && rates[1].close<rates[2].close);
+   bool momentumContinuation=(stateClock.hour==8 && rates[1].close<rates[2].low && fast1<fast2);
+   bool h8DirectTrigger=(!h8EntryConsumed && bearishState && h1Bias<0 && h4Bias<=0 && (directStructureBreak || bearishExpansion || momentumContinuation));
 '@
-if (!$ea.Contains($biasAnchor)) { throw "V42 cannot find HTF bias insertion point." }
+if (!$ea.Contains($biasAnchor)) { throw "V43 cannot find HTF bias insertion point." }
 $ea = $ea.Replace($biasAnchor, $stateLines.TrimEnd())
 
 $continuationOld = '      if(rates[1].close<rates[2].low && rates[2].close<rates[2].open && fast1<fast2 && bodyRatio>=0.38 && volumeRatio>=MinVolumeRatio)'
-$continuationNew = '      if(h8StateTrigger && bodyRatio>=MinBodyRatio && volumeRatio>=MinVolumeRatio)'
-if (!$ea.Contains($continuationOld)) { throw "V42 cannot find continuation sell condition." }
+$continuationNew = '      if(h8DirectTrigger && bodyRatio>=MinBodyRatio && volumeRatio>=MinVolumeRatio)'
+if (!$ea.Contains($continuationOld)) { throw "V43 cannot find continuation sell condition." }
 $ea = $ea.Replace($continuationOld, $continuationNew)
 
 $considerLine = '         Consider(-1,"CONTINUATION",sellBase+18,atr,now.hour,rsi,adx,volumeRatio,bodyRatio,h1Bias,h4Bias,sellCandidate);'
 $considerBlock = @'
       {
          Consider(-1,"CONTINUATION",sellBase+18,atr,now.hour,rsi,adx,volumeRatio,bodyRatio,h1Bias,h4Bias,sellCandidate);
-         h8State=3;
+         h8EntryConsumed=true;
       }
 '@
-if (!$ea.Contains($considerLine)) { throw "V42 cannot find continuation Consider call." }
+if (!$ea.Contains($considerLine)) { throw "V43 cannot find continuation Consider call." }
 $ea = $ea.Replace($considerLine, $considerBlock.TrimEnd())
 
-$ea = $ea.Replace('string comment="V35 "+direction+" "+candidate.setup;', 'string comment="V42 "+direction+" "+candidate.setup;')
-$ea = $ea.Replace('"v35_sell_structure route="+activeRoute', '"v42_h8_state_machine route="+activeRoute')
-$ea = $ea.Replace('V35_SELL_STRUCTURE_QUALITY_GATE risk_normalized=true max_trades_week=4 min_target_pips=400 h1_aligned_h4_aligned=true weak_pullback_buy_pruned=true routes=CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14 edge_routes_pruned=true', 'V42_H8_BREAK_RETEST_STATE_MACHINE risk_normalized=true max_trades_week=4 min_target_pips=400 h1_bearish_h4_not_bullish=true deterministic_state=true setup_break_retest=true one_entry_per_state=true exits_locked_v40=true routes=CORE_CONTINUATION_SELL_08 rejected_cells_pruned=true')
+$ea = $ea.Replace('string comment="V35 "+direction+" "+candidate.setup;', 'string comment="V43 "+direction+" "+candidate.setup;')
+$ea = $ea.Replace('"v35_sell_structure route="+activeRoute', '"v43_h8_direct_break route="+activeRoute')
+$ea = $ea.Replace('V35_SELL_STRUCTURE_QUALITY_GATE risk_normalized=true max_trades_week=4 min_target_pips=400 h1_aligned_h4_aligned=true weak_pullback_buy_pruned=true routes=CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14 edge_routes_pruned=true', 'V43_H8_DIRECT_BREAK_IMPULSE_STATE risk_normalized=true max_trades_week=4 min_target_pips=400 h1_bearish_h4_not_bullish=true deterministic_state=true direct_break_or_impulse=true no_mandatory_retest=true one_entry_per_day=true exits_locked_v40=true routes=CORE_CONTINUATION_SELL_08 rejected_cells_pruned=true')
 
 $required = @(
-  'V42_H8_BREAK_RETEST_STATE_MACHINE',
-  'deterministic_state=true',
-  'setup_break_retest=true',
-  'one_entry_per_state=true',
-  'h8StateTrigger',
-  'boundedRetest',
+  'V43_H8_DIRECT_BREAK_IMPULSE_STATE',
+  'direct_break_or_impulse=true',
+  'no_mandatory_retest=true',
+  'one_entry_per_day=true',
+  'h8DirectTrigger',
+  'directStructureBreak',
+  'bearishExpansion',
   'CORE_CONTINUATION_SELL_08',
   'MaxTradesPerWeek=4',
   'MinTargetPips=400.0',
   'RiskPercent=0.20'
 )
 foreach ($marker in $required) {
-  if (!$ea.Contains($marker)) { throw "V42 marker missing: $marker" }
+  if (!$ea.Contains($marker)) { throw "V43 marker missing: $marker" }
 }
 
-$forbidden = @('CORE_CONTINUATION_SELL_07_08','CORE_SWEEP_SELL_13_14','CORE_PULLBACK_BUY_15','EDGE_PULLBACK_SELL_15','EDGE_CONTINUATION_BUY_07_08','ZLEMA_AUTO','Zlema(')
+$forbidden = @('CORE_CONTINUATION_SELL_07_08','CORE_SWEEP_SELL_13_14','CORE_PULLBACK_BUY_15','EDGE_PULLBACK_SELL_15','EDGE_CONTINUATION_BUY_07_08','ZLEMA_AUTO','Zlema(','boundedRetest','retestTouch','h8StateTrigger')
 foreach ($marker in $forbidden) {
-  if ($ea.Contains($marker)) { throw "V42 forbidden marker present: $marker" }
+  if ($ea.Contains($marker)) { throw "V43 forbidden marker present: $marker" }
 }
 
 Set-Content -Path $eaPath -Value $ea -Encoding UTF8
-Write-Host "V42 hour-8 break-retest state-machine transform applied to $eaPath"
+Write-Host "V43 hour-8 direct break/impulse transform applied to $eaPath"
