@@ -1,6 +1,21 @@
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+function Set-V40ProfileValue([string]$Text, [string]$Name, [string]$OldValue, [string]$NewValue) {
+  $assignmentPattern = "(?m)^(\s*" + [regex]::Escape($Name) + "\s*=\s*)'" + [regex]::Escape($OldValue) + "'(\s*)$"
+  if ($Text -notmatch $assignmentPattern) {
+    throw "V40 wrapper transform missing locked-input assignment: $Name=$OldValue"
+  }
+  $Text = [regex]::Replace($Text, $assignmentPattern, ('${1}' + "'" + $NewValue + "'" + '${2}'), 1)
+
+  $markerOld = $Name + '=' + $OldValue
+  $markerNew = $Name + '=' + $NewValue
+  if (!$Text.Contains($markerOld)) {
+    throw "V40 wrapper transform missing validation marker: $markerOld"
+  }
+  return $Text.Replace($markerOld, $markerNew)
+}
+
 $repo = (Resolve-Path ".").Path
 $reports = Join-Path $repo "reports"
 New-Item -ItemType Directory -Force -Path $reports | Out-Null
@@ -32,28 +47,6 @@ $replacements = [ordered]@{
   'V35 EA' = 'V40 EA'
   'V35 Strategy Tester' = 'V40 Strategy Tester'
   'V35_${symbol}_${period}_${from}_${to}_model${model}' = 'V40_${symbol}_${period}_${from}_${to}_model${model}'
-  "MinSignalScore = '91.0'" = "MinSignalScore = '74.0'"
-  "MinADX = '28.0'" = "MinADX = '18.0'"
-  "MaxSpreadATRFraction = '0.045'" = "MaxSpreadATRFraction = '0.065'"
-  "MinBodyRatio = '0.48'" = "MinBodyRatio = '0.20'"
-  "MinVolumeRatio = '1.18'" = "MinVolumeRatio = '0.80'"
-  "ContinuationTP_ATR = '3.75'" = "ContinuationTP_ATR = '4.20'"
-  "ContinuationSL_ATR = '0.74'" = "ContinuationSL_ATR = '0.66'"
-  "TrailStartATR = '2.75'" = "TrailStartATR = '3.00'"
-  "TrailDistanceATR = '1.10'" = "TrailDistanceATR = '1.20'"
-  "MaxHoldBars = '28'" = "MaxHoldBars = '24'"
-  "TimeExitMinProgressATR = '0.45'" = "TimeExitMinProgressATR = '0.30'"
-  "'MinSignalScore=91.0'" = "'MinSignalScore=74.0'"
-  "'MinADX=28.0'" = "'MinADX=18.0'"
-  "'MaxSpreadATRFraction=0.045'" = "'MaxSpreadATRFraction=0.065'"
-  "'MinBodyRatio=0.48'" = "'MinBodyRatio=0.20'"
-  "'MinVolumeRatio=1.18'" = "'MinVolumeRatio=0.80'"
-  "'ContinuationTP_ATR=3.75'" = "'ContinuationTP_ATR=4.20'"
-  "'ContinuationSL_ATR=0.74'" = "'ContinuationSL_ATR=0.66'"
-  "'TrailStartATR=2.75'" = "'TrailStartATR=3.00'"
-  "'TrailDistanceATR=1.10'" = "'TrailDistanceATR=1.20'"
-  "'MaxHoldBars=28'" = "'MaxHoldBars=24'"
-  "'TimeExitMinProgressATR=0.45'" = "'TimeExitMinProgressATR=0.30'"
 }
 
 foreach ($entry in $replacements.GetEnumerator()) {
@@ -63,15 +56,23 @@ foreach ($entry in $replacements.GetEnumerator()) {
   $text = $text.Replace([string]$entry.Key, [string]$entry.Value)
 }
 
-# Break-even is intentionally patched with an anchored regex rather than two brittle
-# literal replacements. This changes the locked-input assignment itself; the generated
-# runner therefore receives the V40 value without depending on formatting in the V35
-# validation-marker list.
-$breakEvenPattern = "(?m)^(\s*BreakEvenTriggerATR\s*=\s*)'0\.90'(\s*)$"
-if ($text -notmatch $breakEvenPattern) {
-  throw "V40 wrapper transform missing BreakEvenTriggerATR locked-input assignment"
+$profile = [ordered]@{
+  MinSignalScore = @('91.0','74.0')
+  MinADX = @('28.0','18.0')
+  MaxSpreadATRFraction = @('0.045','0.065')
+  MinBodyRatio = @('0.48','0.20')
+  MinVolumeRatio = @('1.18','0.80')
+  ContinuationTP_ATR = @('3.75','4.20')
+  ContinuationSL_ATR = @('0.74','0.66')
+  BreakEvenTriggerATR = @('0.90','1.15')
+  TrailStartATR = @('2.75','3.00')
+  TrailDistanceATR = @('1.10','1.20')
+  MaxHoldBars = @('28','24')
+  TimeExitMinProgressATR = @('0.45','0.30')
 }
-$text = [regex]::Replace($text, $breakEvenPattern, '${1}''1.15''${2}', 1)
+foreach ($entry in $profile.GetEnumerator()) {
+  $text = Set-V40ProfileValue $text ([string]$entry.Key) ([string]$entry.Value[0]) ([string]$entry.Value[1])
+}
 
 $anchor = '  Write-Stage "literal-replacements-complete"'
 if (!$text.Contains($anchor)) {
@@ -105,7 +106,7 @@ foreach ($marker in $required) {
   if (!$text.Contains($marker)) { throw "V40 runner marker missing: $marker" }
 }
 
-$forbidden = @('V35_SELL_STRUCTURE.set','V37_GEOMETRY_REGIME.set','V39_STRUCTURE_IMPULSE.set','MinSignalScore=91.0','MinSignalScore=88.0','MinSignalScore=76.0','MinADX=28.0','MinADX=25.0','MinADX=16.0','MaxSpreadATRFraction=0.045','MaxSpreadATRFraction=0.050','MaxSpreadATRFraction=0.070','MinBodyRatio=0.48','MinBodyRatio=0.42','MinBodyRatio=0.18','MinVolumeRatio=1.18','MinVolumeRatio=1.10','MinVolumeRatio=0.75',"BreakEvenTriggerATR = '0.90'")
+$forbidden = @('V35_SELL_STRUCTURE.set','V37_GEOMETRY_REGIME.set','V39_STRUCTURE_IMPULSE.set','MinSignalScore=91.0','MinSignalScore=88.0','MinSignalScore=76.0','MinADX=28.0','MinADX=25.0','MinADX=16.0','MaxSpreadATRFraction=0.045','MaxSpreadATRFraction=0.050','MaxSpreadATRFraction=0.070','MinBodyRatio=0.48','MinBodyRatio=0.42','MinBodyRatio=0.18','MinVolumeRatio=1.18','MinVolumeRatio=1.10','MinVolumeRatio=0.75',"BreakEvenTriggerATR = '0.90'","TrailStartATR = '2.75'","TrailDistanceATR = '1.10'","MaxHoldBars = '28'","TimeExitMinProgressATR = '0.45'")
 foreach ($marker in $forbidden) {
   if ($text.Contains($marker)) { throw "V40 runner stale marker remains: $marker" }
 }
