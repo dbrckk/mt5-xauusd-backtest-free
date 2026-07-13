@@ -3,17 +3,27 @@ Set-StrictMode -Version Latest
 
 function Set-V40ProfileValue([string]$Text, [string]$Name, [string]$OldValue, [string]$NewValue) {
   $assignmentPattern = "(?m)^(\s*" + [regex]::Escape($Name) + "\s*=\s*)'" + [regex]::Escape($OldValue) + "'(\s*)$"
-  if ($Text -notmatch $assignmentPattern) {
-    throw "V40 wrapper transform missing locked-input assignment: $Name=$OldValue"
+  $matches = [regex]::Matches($Text, $assignmentPattern)
+  if ($matches.Count -ne 1) {
+    throw "V40 wrapper transform expected exactly one locked-input assignment for $Name=$OldValue; found $($matches.Count)"
   }
+
   $Text = [regex]::Replace($Text, $assignmentPattern, ('${1}' + "'" + $NewValue + "'" + '${2}'), 1)
 
+  # Some locked-runner revisions also carry an unquoted diagnostic marker such as
+  # Name=OldValue. Update it when present, but do not require it: the canonical
+  # assignment above is the source of truth and the required-marker gate below
+  # verifies the transformed value independently.
   $markerOld = $Name + '=' + $OldValue
   $markerNew = $Name + '=' + $NewValue
-  if (!$Text.Contains($markerOld)) {
-    throw "V40 wrapper transform missing validation marker: $markerOld"
+  if ($Text.Contains($markerOld)) {
+    $Text = $Text.Replace($markerOld, $markerNew)
   }
-  return $Text.Replace($markerOld, $markerNew)
+
+  if ($Text -notmatch ("(?m)^\s*" + [regex]::Escape($Name) + "\s*=\s*'" + [regex]::Escape($NewValue) + "'\s*$")) {
+    throw "V40 wrapper transform failed to verify canonical assignment: $Name=$NewValue"
+  }
+  return $Text
 }
 
 $repo = (Resolve-Path ".").Path
