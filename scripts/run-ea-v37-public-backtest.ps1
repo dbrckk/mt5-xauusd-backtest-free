@@ -1,11 +1,11 @@
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-function Set-V43ProfileValue([string]$Text, [string]$Name, [string]$OldValue, [string]$NewValue) {
+function Set-V44ProfileValue([string]$Text, [string]$Name, [string]$OldValue, [string]$NewValue) {
   $assignmentPattern = "(?m)^(\s*" + [regex]::Escape($Name) + "\s*=\s*)'" + [regex]::Escape($OldValue) + "'(\s*)$"
   $matches = [regex]::Matches($Text, $assignmentPattern)
   if ($matches.Count -ne 1) {
-    throw "V43 wrapper transform expected exactly one locked-input assignment for $Name=$OldValue; found $($matches.Count)"
+    throw "V44 wrapper transform expected exactly one locked-input assignment for $Name=$OldValue; found $($matches.Count)"
   }
 
   $Text = [regex]::Replace($Text, $assignmentPattern, ('${1}' + "'" + $NewValue + "'" + '${2}'), 1)
@@ -14,7 +14,7 @@ function Set-V43ProfileValue([string]$Text, [string]$Name, [string]$OldValue, [s
   if ($Text.Contains($markerOld)) { $Text = $Text.Replace($markerOld, $markerNew) }
 
   if ($Text -notmatch ("(?m)^\s*" + [regex]::Escape($Name) + "\s*=\s*'" + [regex]::Escape($NewValue) + "'\s*$")) {
-    throw "V43 wrapper transform failed to verify canonical assignment: $Name=$NewValue"
+    throw "V44 wrapper transform failed to verify canonical assignment: $Name=$NewValue"
   }
   return $Text
 }
@@ -30,28 +30,28 @@ if (!(Test-Path $boundedDownloader)) { throw "Bounded public downloader missing:
 
 $text = Get-Content -Path $source -Raw -Encoding UTF8
 $replacements = [ordered]@{
-  'V35_SELL_STRUCTURE.set' = 'V43_H8_DIRECT_BREAK.set'
-  'V35_SELL_STRUCTURE_journal.csv' = 'V43_H8_DIRECT_BREAK_journal.csv'
-  'V35 Sell Structure MT5 Backtest' = 'V43 Hour-8 Direct Break MT5 Backtest'
-  'XAUUSD_V35_Sell_Structure_Quality_Gate' = 'XAUUSD_V43_H8_Direct_Break_Impulse_State'
-  'V35_CURRENT_RUN.txt' = 'V43_CURRENT_RUN.txt'
-  'V35_PUBLIC_BACKTEST_FALLBACK_REPORT.html' = 'V43_PUBLIC_BACKTEST_FALLBACK_REPORT.html'
-  'V35_MT5_ImportCustomSymbol.ini' = 'V43_MT5_ImportCustomSymbol.ini'
-  'V35_MT5_Backtest.ini' = 'V43_MT5_Backtest.ini'
-  'compile_v35_ea.log' = 'compile_v43_ea.log'
-  'V35_WRAPPER_STAGE.txt' = 'V43_WRAPPER_STAGE.txt'
-  'V35_LOCKED_RUNNER_PREVIEW.ps1' = 'V43_LOCKED_RUNNER_PREVIEW.ps1'
-  'V35_LOCKED_RUNNER_CONSOLE.log' = 'V43_LOCKED_RUNNER_CONSOLE.log'
-  'V35_LOCKED_RUNNER_EXIT_CODE.txt' = 'V43_LOCKED_RUNNER_EXIT_CODE.txt'
-  'V35_LOCKED_RUNNER_ERROR.txt' = 'V43_LOCKED_RUNNER_ERROR.txt'
-  'V35 locked runner' = 'V43 locked runner'
-  'V35 runner lock failed' = 'V43 runner lock failed'
-  'V35 EA' = 'V43 EA'
-  'V35 Strategy Tester' = 'V43 Strategy Tester'
-  'V35_${symbol}_${period}_${from}_${to}_model${model}' = 'V43_${symbol}_${period}_${from}_${to}_model${model}'
+  'V35_SELL_STRUCTURE.set' = 'V44_H8_EARLY_FAILURE.set'
+  'V35_SELL_STRUCTURE_journal.csv' = 'V44_H8_EARLY_FAILURE_journal.csv'
+  'V35 Sell Structure MT5 Backtest' = 'V44 Hour-8 Early Failure MT5 Backtest'
+  'XAUUSD_V35_Sell_Structure_Quality_Gate' = 'XAUUSD_V44_H8_Early_Failure_Exit'
+  'V35_CURRENT_RUN.txt' = 'V44_CURRENT_RUN.txt'
+  'V35_PUBLIC_BACKTEST_FALLBACK_REPORT.html' = 'V44_PUBLIC_BACKTEST_FALLBACK_REPORT.html'
+  'V35_MT5_ImportCustomSymbol.ini' = 'V44_MT5_ImportCustomSymbol.ini'
+  'V35_MT5_Backtest.ini' = 'V44_MT5_Backtest.ini'
+  'compile_v35_ea.log' = 'compile_v44_ea.log'
+  'V35_WRAPPER_STAGE.txt' = 'V44_WRAPPER_STAGE.txt'
+  'V35_LOCKED_RUNNER_PREVIEW.ps1' = 'V44_LOCKED_RUNNER_PREVIEW.ps1'
+  'V35_LOCKED_RUNNER_CONSOLE.log' = 'V44_LOCKED_RUNNER_CONSOLE.log'
+  'V35_LOCKED_RUNNER_EXIT_CODE.txt' = 'V44_LOCKED_RUNNER_EXIT_CODE.txt'
+  'V35_LOCKED_RUNNER_ERROR.txt' = 'V44_LOCKED_RUNNER_ERROR.txt'
+  'V35 locked runner' = 'V44 locked runner'
+  'V35 runner lock failed' = 'V44 runner lock failed'
+  'V35 EA' = 'V44 EA'
+  'V35 Strategy Tester' = 'V44 Strategy Tester'
+  'V35_${symbol}_${period}_${from}_${to}_model${model}' = 'V44_${symbol}_${period}_${from}_${to}_model${model}'
 }
 foreach ($entry in $replacements.GetEnumerator()) {
-  if (!$text.Contains([string]$entry.Key)) { throw "V43 wrapper transform missing marker: $($entry.Key)" }
+  if (!$text.Contains([string]$entry.Key)) { throw "V44 wrapper transform missing marker: $($entry.Key)" }
   $text = $text.Replace([string]$entry.Key, [string]$entry.Value)
 }
 
@@ -70,11 +70,11 @@ $profile = [ordered]@{
   TimeExitMinProgressATR = @('0.45','0.30')
 }
 foreach ($entry in $profile.GetEnumerator()) {
-  $text = Set-V43ProfileValue $text ([string]$entry.Key) ([string]$entry.Value[0]) ([string]$entry.Value[1])
+  $text = Set-V44ProfileValue $text ([string]$entry.Key) ([string]$entry.Value[0]) ([string]$entry.Value[1])
 }
 
 $anchor = '  Write-Stage "literal-replacements-complete"'
-if (!$text.Contains($anchor)) { throw "V43 wrapper transform missing V35 downloader injection anchor" }
+if (!$text.Contains($anchor)) { throw "V44 wrapper transform missing V35 downloader injection anchor" }
 $injection = @'
   $text = Replace-RequiredLiteral $text 'download_public_xau_m1.py' 'download_public_xau_m1_bounded.py' 'bounded public downloader'
   Write-Stage "literal-replacements-complete"
@@ -82,7 +82,7 @@ $injection = @'
 $text = $text.Replace($anchor, $injection.TrimEnd())
 
 $required = @(
-  'V43_H8_DIRECT_BREAK.set',
+  'V44_H8_EARLY_FAILURE.set',
   'download_public_xau_m1_bounded.py',
   "MinSignalScore = '68.0'",
   "MinADX = '15.0'",
@@ -96,23 +96,23 @@ $required = @(
   "TrailDistanceATR = '1.20'",
   "MaxHoldBars = '24'",
   "TimeExitMinProgressATR = '0.30'",
-  "CSVJournalName = 'V43_H8_DIRECT_BREAK_journal.csv'",
-  "'effective_profile=V43_H8_DIRECT_BREAK.set'"
+  "CSVJournalName = 'V44_H8_EARLY_FAILURE_journal.csv'",
+  "'effective_profile=V44_H8_EARLY_FAILURE.set'"
 )
 foreach ($marker in $required) {
-  if (!$text.Contains($marker)) { throw "V43 runner marker missing: $marker" }
+  if (!$text.Contains($marker)) { throw "V44 runner marker missing: $marker" }
 }
 
-$forbidden = @('V35_SELL_STRUCTURE.set','V37_GEOMETRY_REGIME.set','V39_STRUCTURE_IMPULSE.set','V40_H8_CONTINUATION.set','V41_H8_OPPORTUNITY.set','V42_H8_STATE_MACHINE.set','MinSignalScore=91.0','MinSignalScore=88.0','MinSignalScore=76.0','MinSignalScore=74.0','MinADX=28.0','MinADX=25.0','MinADX=18.0','MaxSpreadATRFraction=0.045','MaxSpreadATRFraction=0.050','MaxSpreadATRFraction=0.065','MinBodyRatio=0.48','MinBodyRatio=0.42','MinBodyRatio=0.20','MinVolumeRatio=1.18','MinVolumeRatio=1.10','MinVolumeRatio=0.80',"BreakEvenTriggerATR = '0.90'","TrailStartATR = '2.75'","TrailDistanceATR = '1.10'","MaxHoldBars = '28'","TimeExitMinProgressATR = '0.45'")
+$forbidden = @('V35_SELL_STRUCTURE.set','V37_GEOMETRY_REGIME.set','V39_STRUCTURE_IMPULSE.set','V40_H8_CONTINUATION.set','V41_H8_OPPORTUNITY.set','V42_H8_STATE_MACHINE.set','V43_H8_DIRECT_BREAK.set','MinSignalScore=91.0','MinSignalScore=88.0','MinSignalScore=76.0','MinSignalScore=74.0','MinADX=28.0','MinADX=25.0','MinADX=18.0','MaxSpreadATRFraction=0.045','MaxSpreadATRFraction=0.050','MaxSpreadATRFraction=0.065','MinBodyRatio=0.48','MinBodyRatio=0.42','MinBodyRatio=0.20','MinVolumeRatio=1.18','MinVolumeRatio=1.10','MinVolumeRatio=0.80',"BreakEvenTriggerATR = '0.90'","TrailStartATR = '2.75'","TrailDistanceATR = '1.10'","MaxHoldBars = '28'","TimeExitMinProgressATR = '0.45'")
 foreach ($marker in $forbidden) {
-  if ($text.Contains($marker)) { throw "V43 runner stale marker remains: $marker" }
+  if ($text.Contains($marker)) { throw "V44 runner stale marker remains: $marker" }
 }
 
-$patched = Join-Path $env:RUNNER_TEMP "run-ea-v43-public-backtest.locked.ps1"
+$patched = Join-Path $env:RUNNER_TEMP "run-ea-v44-public-backtest.locked.ps1"
 Set-Content -Path $patched -Value $text -Encoding UTF8
-Copy-Item $patched (Join-Path $reports "V43_WRAPPER_SOURCE.ps1") -Force
+Copy-Item $patched (Join-Path $reports "V44_WRAPPER_SOURCE.ps1") -Force
 
 & pwsh -NoProfile -ExecutionPolicy Bypass -File $patched
 $code = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
-if ($code -ne 0) { throw "V43 runner exited with code $code" }
+if ($code -ne 0) { throw "V44 runner exited with code $code" }
 exit 0
