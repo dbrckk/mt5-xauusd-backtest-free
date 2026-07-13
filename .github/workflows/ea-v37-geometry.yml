@@ -1,5 +1,5 @@
-name: EA V39 STRUCTURE IMPULSE VALIDATION
-run-name: V39 structure impulse · ${{ github.ref_name }} · ${{ github.sha }}
+name: EA V40 H8 CONTINUATION VALIDATION
+run-name: V40 hour-8 continuation · ${{ github.ref_name }} · ${{ github.sha }}
 
 on:
   workflow_dispatch:
@@ -41,7 +41,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: v39-pipeline-${{ github.ref }}-${{ github.event_name }}
+  group: v40-pipeline-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
@@ -97,23 +97,22 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Apply canonical V39 structure-impulse transform
+      - name: Apply canonical V40 hour-8 continuation transform
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/apply-v37-geometry-regime.ps1
 
-      - name: Validate canonical V39 identity
+      - name: Validate canonical V40 identity
         shell: pwsh
         run: |
           $eaPath = "MQL5/Experts/XAUUSD_V27_Clean_MultiSetup.mq5"
           $ea = Get-Content $eaPath -Raw
           $required = @(
-            "V39 Structure Impulse Gate",
-            "V39_STRUCTURE_IMPULSE_GATE",
-            "bearish_displacement=true",
-            "bearishDisplacement>=0.10",
-            "upperWickRatio>=0.12",
-            "CORE_CONTINUATION_SELL_07_08",
-            "CORE_SWEEP_SELL_13_14",
+            "V40 Hour-8 Continuation State Gate",
+            "V40_H8_CONTINUATION_STATE_GATE",
+            "deterministic_state=true",
+            "bearishState",
+            "structurePressure",
+            "CORE_CONTINUATION_SELL_08",
             "RiskPercent=0.20",
             "MaxTradesPerWeek=4",
             "MinTargetPips=400.0",
@@ -121,15 +120,15 @@ jobs:
             "HardFlatMinute=45"
           )
           foreach ($marker in $required) {
-            if (!$ea.Contains($marker)) { throw "V39 marker missing: $marker" }
+            if (!$ea.Contains($marker)) { throw "V40 marker missing: $marker" }
           }
-          $forbidden = @("CORE_PULLBACK_BUY_15","EDGE_PULLBACK_SELL_15","EDGE_CONTINUATION_BUY_07_08","ZLEMA_AUTO","Zlema(")
+          $forbidden = @("CORE_CONTINUATION_SELL_07_08","CORE_SWEEP_SELL_13_14","CORE_PULLBACK_BUY_15","EDGE_PULLBACK_SELL_15","EDGE_CONTINUATION_BUY_07_08","ZLEMA_AUTO","Zlema(")
           foreach ($marker in $forbidden) {
-            if ($ea.Contains($marker)) { throw "V39 forbidden marker detected: $marker" }
+            if ($ea.Contains($marker)) { throw "V40 forbidden marker detected: $marker" }
           }
           New-Item -ItemType Directory -Force -Path reports | Out-Null
           @(
-            "strategy=XAUUSD_V39_Structure_Impulse",
+            "strategy=XAUUSD_V40_H8_Continuation_State",
             "identity=PASS",
             "checked_out_sha=$((git rev-parse HEAD).Trim())",
             "ea_sha256=$((Get-FileHash -Algorithm SHA256 -Path $eaPath).Hash)",
@@ -138,13 +137,14 @@ jobs:
             "min_target_pips=400",
             "strict_intraday=true",
             "forced_trades=false",
-            "routes=CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14",
+            "routes=CORE_CONTINUATION_SELL_08",
+            "rejected_cells_pruned=07|13|14",
             "pipeline_budget_minutes=355",
             "download_budget_seconds=9000",
             "tester_budget_minutes=180",
             "bounded_downloader=true",
             "partial_cache_persistence=true"
-          ) | Set-Content reports/V39_SOURCE_IDENTITY.txt -Encoding UTF8
+          ) | Set-Content reports/V40_SOURCE_IDENTITY.txt -Encoding UTF8
 
       - name: Restore Dukascopy public XAU history
         id: dukascopy-cache-restore
@@ -152,14 +152,14 @@ jobs:
         continue-on-error: true
         with:
           path: .cache/dukascopy
-          key: dukascopy-xau-v39-recovery-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: dukascopy-xau-v40-recovery-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            dukascopy-xau-v39-recovery-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-
+            dukascopy-xau-v40-recovery-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-
+            dukascopy-xau-v40-recovery-${{ matrix.chunk }}-
             dukascopy-xau-v39-recovery-${{ matrix.chunk }}-
             dukascopy-xau-v38-recovery-${{ matrix.chunk }}-
             dukascopy-xau-v37-geometry-${{ matrix.chunk }}-
             dukascopy-xau-v35-sell-structure-${{ matrix.chunk }}-
-            dukascopy-xau-v34-balanced-${{ matrix.chunk }}-
 
       - name: Capture source digests
         shell: pwsh
@@ -180,9 +180,9 @@ jobs:
             if (!(Test-Path $path)) { throw "Missing source: $path" }
             $digests[$path] = (Get-FileHash -Algorithm SHA256 -Path $path).Hash
           }
-          $digests | ConvertTo-Json | Set-Content (Join-Path $env:RUNNER_TEMP "v39-source-digests.json") -Encoding UTF8
+          $digests | ConvertTo-Json | Set-Content (Join-Path $env:RUNNER_TEMP "v40-source-digests.json") -Encoding UTF8
 
-      - name: Run committed V39 MT5 backtest
+      - name: Run committed V40 MT5 backtest
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-ea-v37-public-backtest.ps1
 
@@ -192,14 +192,14 @@ jobs:
         continue-on-error: true
         with:
           path: .cache/dukascopy
-          key: dukascopy-xau-v39-recovery-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: dukascopy-xau-v40-recovery-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Verify source immutability
         if: always()
         shell: pwsh
         run: |
-          $digestPath = Join-Path $env:RUNNER_TEMP "v39-source-digests.json"
-          if (!(Test-Path $digestPath)) { throw "V39 digest file missing" }
+          $digestPath = Join-Path $env:RUNNER_TEMP "v40-source-digests.json"
+          if (!(Test-Path $digestPath)) { throw "V40 digest file missing" }
           $expected = Get-Content $digestPath -Raw | ConvertFrom-Json
           $mutated = @()
           foreach ($property in $expected.PSObject.Properties) {
@@ -208,17 +208,17 @@ jobs:
             $actual = (Get-FileHash -Algorithm SHA256 -Path $path).Hash
             if ($actual -ne [string]$property.Value) { $mutated += $path }
           }
-          if ($mutated.Count -gt 0) { throw "V39 source mutation: $($mutated -join ', ')" }
-          "V39_SOURCE_IMMUTABILITY=PASS"
+          if ($mutated.Count -gt 0) { throw "V40 source mutation: $($mutated -join ', ')" }
+          "V40_SOURCE_IMMUTABILITY=PASS"
 
       - name: Analyze results
         if: always()
         shell: pwsh
         run: |
           if (!(Test-Path reports)) { New-Item -ItemType Directory -Force -Path reports | Out-Null }
-          python scripts/analyze-v27-results.py reports --deposit $env:BT_DEPOSIT | Tee-Object -FilePath reports/V39_ANALYSIS_CONSOLE.json
+          python scripts/analyze-v27-results.py reports --deposit $env:BT_DEPOSIT | Tee-Object -FilePath reports/V40_ANALYSIS_CONSOLE.json
 
-      - name: Export compact V39 summary
+      - name: Export compact V40 summary
         if: always()
         shell: pwsh
         run: |
@@ -230,14 +230,14 @@ jobs:
             $summary = "{0}-T{1}-PF{2}-WR{3}-NET{4:N0}" -f $a.verdict,[int]$a.overall.trades,$pf,$wr,[double]$a.overall.net_profit
             $summary = $summary -replace '[^A-Za-z0-9_.-]','_'
           }
-          "V39_SUMMARY=$summary" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
-          $summary | Set-Content reports/V39_COMPACT_SUMMARY.txt -Encoding UTF8
+          "V40_SUMMARY=$summary" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          $summary | Set-Content reports/V40_COMPACT_SUMMARY.txt -Encoding UTF8
 
       - name: Upload artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: EA-V39-${{ matrix.chunk }}-${{ env.V39_SUMMARY }}-${{ github.run_number }}-${{ github.sha }}
+          name: EA-V40-${{ matrix.chunk }}-${{ env.V40_SUMMARY }}-${{ github.run_number }}-${{ github.sha }}
           path: reports/**
           if-no-files-found: error
           retention-days: 14
