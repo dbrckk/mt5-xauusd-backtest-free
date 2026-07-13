@@ -95,9 +95,14 @@ datetime h8BreakBarTime=0;
 if (!$ea.Contains($globalAnchor)) { throw "V42 cannot find global state anchor." }
 $ea = $ea.Replace($globalAnchor, $globalState.TrimEnd())
 
-$volumeLine = '   double volumeRatio=volumeSma>0?(double)rates[1].tick_volume/volumeSma:0;'
+# Insert state logic only after HTF bias variables exist. This avoids compile-time use-before-declaration.
+$biasAnchor = @'
+   int h1Bias=Bias(PERIOD_H1);
+   int h4Bias=Bias(PERIOD_H4);
+'@
 $stateLines = @'
-   double volumeRatio=volumeSma>0?(double)rates[1].tick_volume/volumeSma:0;
+   int h1Bias=Bias(PERIOD_H1);
+   int h4Bias=Bias(PERIOD_H4);
    double closeLocation=(rates[1].close-rates[1].low)/range;
    double bearishDisplacement=(rates[1].open-rates[1].close)/atr;
    double recentLow=LL(rates,2,4);
@@ -140,8 +145,8 @@ $stateLines = @'
    bool bearishRejection=(rates[1].close<h8ReferenceLow && rates[1].close<rates[1].open && closeLocation<=0.60 && bearishDisplacement>=0.02);
    bool h8StateTrigger=(boundedRetest && retestTouch && bearishRejection && bearishState);
 '@
-if (!$ea.Contains($volumeLine)) { throw "V42 cannot find volume ratio insertion point." }
-$ea = $ea.Replace($volumeLine, $stateLines.TrimEnd())
+if (!$ea.Contains($biasAnchor)) { throw "V42 cannot find HTF bias insertion point." }
+$ea = $ea.Replace($biasAnchor, $stateLines.TrimEnd())
 
 $continuationOld = '      if(rates[1].close<rates[2].low && rates[2].close<rates[2].open && fast1<fast2 && bodyRatio>=0.38 && volumeRatio>=MinVolumeRatio)'
 $continuationNew = '      if(h8StateTrigger && bodyRatio>=MinBodyRatio && volumeRatio>=MinVolumeRatio)'
