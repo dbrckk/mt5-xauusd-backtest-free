@@ -9,11 +9,13 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/apply-v35-sell-structure.p
 $ea = Get-Content $eaPath -Raw
 
 # Identity.
-$ea = $ea.Replace('#property version "2.94"', '#property version "2.96"')
-$ea = $ea.Replace('V35 Sell Structure Quality Gate: weak pullback route pruned', 'V38 Broad Sell Opportunity Gate: validated routes only')
-$ea = $ea.Replace('input string CSVJournalName="V35_SELL_STRUCTURE_journal.csv";', 'input string CSVJournalName="V38_BROAD_SELL_journal.csv";')
+$ea = $ea.Replace('#property version "2.94"', '#property version "2.97"')
+$ea = $ea.Replace('V35 Sell Structure Quality Gate: weak pullback route pruned', 'V39 Structure Impulse Gate: validated routes only')
+$ea = $ea.Replace('input string CSVJournalName="V35_SELL_STRUCTURE_journal.csv";', 'input string CSVJournalName="V39_STRUCTURE_IMPULSE_journal.csv";')
 
-# Expand opportunity only inside the two previously accepted route-hour cells.
+# V38 remained statistically unusable (8 trades across four full periods). V39 broadens
+# only the two accepted route-hour cells, while retaining deterministic HTF bearish regime,
+# spread controls, natural signals, risk normalization, weekly cap and strict intraday flat.
 $routeQualityV35 = @'
 bool RouteQuality(string setup,int dir,double rsi,double adx,double volumeRatio,double bodyRatio,int h1Bias,int h4Bias)
 {
@@ -32,7 +34,7 @@ bool RouteQuality(string setup,int dir,double rsi,double adx,double volumeRatio,
    return false;
 }
 '@
-$routeQualityV38 = @'
+$routeQualityV39 = @'
 bool RouteQuality(string setup,int dir,double rsi,double adx,double volumeRatio,double bodyRatio,int h1Bias,int h4Bias)
 {
    if(dir>=0)
@@ -43,52 +45,54 @@ bool RouteQuality(string setup,int dir,double rsi,double adx,double volumeRatio,
       return false;
 
    if(setup=="CONTINUATION" && dir<0)
-      return rsi>=34 && rsi<=49 && adx>=22 && volumeRatio>=1.00 && bodyRatio>=0.34;
+      return rsi>=30 && rsi<=54 && adx>=16 && volumeRatio>=0.75 && bodyRatio>=0.18;
    if(setup=="SWEEP" && dir<0)
-      return rsi>=34 && rsi<=50 && adx>=23 && volumeRatio>=1.02 && bodyRatio>=0.36;
+      return rsi>=30 && rsi<=56 && adx>=16 && volumeRatio>=0.75 && bodyRatio>=0.18;
 
    return false;
 }
 '@
-if (!$ea.Contains($routeQualityV35)) { throw "V38 cannot find V35 RouteQuality block." }
-$ea = $ea.Replace($routeQualityV35, $routeQualityV38)
+if (!$ea.Contains($routeQualityV35)) { throw "V39 cannot find V35 RouteQuality block." }
+$ea = $ea.Replace($routeQualityV35, $routeQualityV39)
 
-# Recover a statistically useful sample without opening rejected routes or hours.
-$ea = $ea.Replace('input double MinSignalScore=91.0;', 'input double MinSignalScore=84.0;')
-$ea = $ea.Replace('input double MinADX=28.0;', 'input double MinADX=22.0;')
-$ea = $ea.Replace('input double MaxSpreadATRFraction=0.045;', 'input double MaxSpreadATRFraction=0.060;')
-$ea = $ea.Replace('input double MinBodyRatio=0.48;', 'input double MinBodyRatio=0.34;')
-$ea = $ea.Replace('input double MinVolumeRatio=1.18;', 'input double MinVolumeRatio=1.00;')
+# Recover a useful sample without opening rejected routes or hours.
+$ea = $ea.Replace('input double MinSignalScore=91.0;', 'input double MinSignalScore=76.0;')
+$ea = $ea.Replace('input double MinADX=28.0;', 'input double MinADX=16.0;')
+$ea = $ea.Replace('input double MaxSpreadATRFraction=0.045;', 'input double MaxSpreadATRFraction=0.070;')
+$ea = $ea.Replace('input double MinBodyRatio=0.48;', 'input double MinBodyRatio=0.18;')
+$ea = $ea.Replace('input double MinVolumeRatio=1.18;', 'input double MinVolumeRatio=0.75;')
 
-# Retain directional geometry, but remove the V37 double-filter that reduced four years to two trades.
 $volumeLine = '   double volumeRatio=volumeSma>0?(double)rates[1].tick_volume/volumeSma:0;'
 $geometryLines = @'
    double volumeRatio=volumeSma>0?(double)rates[1].tick_volume/volumeSma:0;
    double closeLocation=(rates[1].close-rates[1].low)/range;
    double upperWickRatio=(rates[1].high-MathMax(rates[1].open,rates[1].close))/range;
+   double bearishDisplacement=(rates[1].open-rates[1].close)/atr;
 '@
-if (!$ea.Contains($volumeLine)) { throw "V38 cannot find volume ratio insertion point." }
+if (!$ea.Contains($volumeLine)) { throw "V39 cannot find volume ratio insertion point." }
 $ea = $ea.Replace($volumeLine, $geometryLines.TrimEnd())
 
+# Continuation becomes a deterministic bearish impulse / structure-pressure event.
 $continuationOld = '      if(rates[1].close<rates[2].low && rates[2].close<rates[2].open && fast1<fast2 && bodyRatio>=0.38 && volumeRatio>=MinVolumeRatio)'
-$continuationNew = '      if(rates[1].close<rates[2].low && rates[2].close<rates[2].open && fast1<fast2 && bodyRatio>=MinBodyRatio && volumeRatio>=MinVolumeRatio && closeLocation<=0.38 && upperWickRatio<=0.50)'
-if (!$ea.Contains($continuationOld)) { throw "V38 cannot find continuation sell condition." }
+$continuationNew = '      if(rates[1].close<rates[2].close && rates[1].close<rates[1].open && fast1<slow1 && fast1<=fast2 && bodyRatio>=MinBodyRatio && volumeRatio>=MinVolumeRatio && closeLocation<=0.55 && bearishDisplacement>=0.10)'
+if (!$ea.Contains($continuationOld)) { throw "V39 cannot find continuation sell condition." }
 $ea = $ea.Replace($continuationOld, $continuationNew)
 
+# Sweep remains genuine: takes prior liquidity, closes back below it, and rejects upper range.
 $sweepOld = '      if(h1Bias<0 && h4Bias<0 && rates[1].high>previousHigh && rates[1].close<previousHigh && rates[1].close<rates[1].open && rsi<53 && bodyRatio>=MinBodyRatio && volumeRatio>=MinVolumeRatio)'
-$sweepNew = '      if(h1Bias<0 && h4Bias<0 && rates[1].high>previousHigh && rates[1].close<previousHigh && rates[1].close<rates[1].open && rsi<53 && bodyRatio>=MinBodyRatio && volumeRatio>=MinVolumeRatio && closeLocation<=0.45 && upperWickRatio>=0.20)'
-if (!$ea.Contains($sweepOld)) { throw "V38 cannot find sweep sell condition." }
+$sweepNew = '      if(h1Bias<0 && h4Bias<0 && rates[1].high>previousHigh && rates[1].close<previousHigh && rates[1].close<rates[1].open && rsi<56 && bodyRatio>=MinBodyRatio && volumeRatio>=MinVolumeRatio && closeLocation<=0.60 && upperWickRatio>=0.12)'
+if (!$ea.Contains($sweepOld)) { throw "V39 cannot find sweep sell condition." }
 $ea = $ea.Replace($sweepOld, $sweepNew)
 
-$ea = $ea.Replace('string comment="V35 "+direction+" "+candidate.setup;', 'string comment="V38 "+direction+" "+candidate.setup;')
-$ea = $ea.Replace('"v35_sell_structure route="+activeRoute', '"v38_broad_sell route="+activeRoute')
-$ea = $ea.Replace('V35_SELL_STRUCTURE_QUALITY_GATE risk_normalized=true max_trades_week=4 min_target_pips=400 h1_aligned_h4_aligned=true weak_pullback_buy_pruned=true routes=CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14 edge_routes_pruned=true', 'V38_BROAD_SELL_OPPORTUNITY_GATE risk_normalized=true max_trades_week=4 min_target_pips=400 h1_aligned_h4_aligned=true directional_geometry=true routes=CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14 edge_routes_pruned=true')
+$ea = $ea.Replace('string comment="V35 "+direction+" "+candidate.setup;', 'string comment="V39 "+direction+" "+candidate.setup;')
+$ea = $ea.Replace('"v35_sell_structure route="+activeRoute', '"v39_structure_impulse route="+activeRoute')
+$ea = $ea.Replace('V35_SELL_STRUCTURE_QUALITY_GATE risk_normalized=true max_trades_week=4 min_target_pips=400 h1_aligned_h4_aligned=true weak_pullback_buy_pruned=true routes=CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14 edge_routes_pruned=true', 'V39_STRUCTURE_IMPULSE_GATE risk_normalized=true max_trades_week=4 min_target_pips=400 h1_aligned_h4_aligned=true bearish_displacement=true routes=CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14 edge_routes_pruned=true')
 
 $required = @(
-  'V38_BROAD_SELL_OPPORTUNITY_GATE',
-  'directional_geometry=true',
-  'closeLocation<=0.38',
-  'upperWickRatio>=0.20',
+  'V39_STRUCTURE_IMPULSE_GATE',
+  'bearish_displacement=true',
+  'bearishDisplacement>=0.10',
+  'upperWickRatio>=0.12',
   'MaxTradesPerWeek=4',
   'MinTargetPips=400.0',
   'RiskPercent=0.20',
@@ -96,13 +100,13 @@ $required = @(
   'CORE_SWEEP_SELL_13_14'
 )
 foreach ($marker in $required) {
-  if (!$ea.Contains($marker)) { throw "V38 marker missing: $marker" }
+  if (!$ea.Contains($marker)) { throw "V39 marker missing: $marker" }
 }
 
 $forbidden = @('EDGE_PULLBACK_SELL_15','EDGE_CONTINUATION_BUY_07_08','CORE_PULLBACK_BUY_15','ZLEMA_AUTO','Zlema(')
 foreach ($marker in $forbidden) {
-  if ($ea.Contains($marker)) { throw "V38 forbidden marker present: $marker" }
+  if ($ea.Contains($marker)) { throw "V39 forbidden marker present: $marker" }
 }
 
 Set-Content -Path $eaPath -Value $ea -Encoding UTF8
-Write-Host "V38 broad-sell opportunity transform applied to $eaPath"
+Write-Host "V39 structure-impulse transform applied to $eaPath"
