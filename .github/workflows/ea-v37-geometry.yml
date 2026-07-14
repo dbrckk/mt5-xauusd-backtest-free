@@ -1,5 +1,5 @@
-name: EA V44 H8 EARLY FAILURE VALIDATION
-run-name: V44 hour-8 early failure · ${{ github.ref_name }} · ${{ github.sha }}
+name: EA V45 H8 H9 CONTINUATION VALIDATION
+run-name: V45 hour-8/9 continuation expansion · ${{ github.ref_name }} · ${{ github.sha }}
 
 on:
   workflow_dispatch:
@@ -41,7 +41,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: v44-pipeline-${{ github.ref }}-${{ github.event_name }}
+  group: v45-pipeline-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
@@ -97,29 +97,26 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Apply canonical V44 hour-8 early-failure transform
+      - name: Apply canonical V45 H8-H9 continuation transform
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/apply-v37-geometry-regime.ps1
 
-      - name: Validate canonical V44 identity
+      - name: Validate canonical V45 identity
         shell: pwsh
         run: |
           $eaPath = "MQL5/Experts/XAUUSD_V27_Clean_MultiSetup.mq5"
           $ea = Get-Content $eaPath -Raw
           $required = @(
-            "V44 Hour-8 Early Failure Exit",
-            "V44_H8_EARLY_FAILURE_EXIT",
+            "V45 H8-H9 Continuation Expansion",
+            "V45_H8_H9_CONTINUATION_EXPANSION",
             "v41_entry_baseline=true",
-            "early_failure_exit=true",
-            "UseEarlyFailureExit=true",
-            "EarlyFailureBars=4",
-            "EarlyFailureAdverseATR=0.30",
-            "h8OpportunityTrigger",
+            "structural_exits_restored=true",
+            "fresh_cell_09=true",
+            "sessionOpportunityTrigger",
             "structurePressure",
             "momentumExpansion",
-            "EARLY_FAILURE_ADVERSE",
-            "EARLY_FAILURE_STALLED",
             "CORE_CONTINUATION_SELL_08",
+            "TEST_CONTINUATION_SELL_09",
             "RiskPercent=0.20",
             "MaxTradesPerWeek=4",
             "MinTargetPips=400.0",
@@ -127,15 +124,15 @@ jobs:
             "HardFlatMinute=45"
           )
           foreach ($marker in $required) {
-            if (!$ea.Contains($marker)) { throw "V44 marker missing: $marker" }
+            if (!$ea.Contains($marker)) { throw "V45 marker missing: $marker" }
           }
-          $forbidden = @("CORE_CONTINUATION_SELL_07_08","CORE_SWEEP_SELL_13_14","CORE_PULLBACK_BUY_15","EDGE_PULLBACK_SELL_15","EDGE_CONTINUATION_BUY_07_08","ZLEMA_AUTO","Zlema(","boundedRetest","retestTouch","h8StateTrigger","h8DirectTrigger","directStructureBreak","bearishExpansion")
+          $forbidden = @("CORE_CONTINUATION_SELL_07_08","CORE_SWEEP_SELL_13_14","CORE_PULLBACK_BUY_15","EDGE_PULLBACK_SELL_15","EDGE_CONTINUATION_BUY_07_08","ZLEMA_AUTO","Zlema(","boundedRetest","retestTouch","h8StateTrigger","h8DirectTrigger","directStructureBreak","bearishExpansion","UseEarlyFailureExit","EARLY_FAILURE_ADVERSE","EARLY_FAILURE_STALLED")
           foreach ($marker in $forbidden) {
-            if ($ea.Contains($marker)) { throw "V44 forbidden marker detected: $marker" }
+            if ($ea.Contains($marker)) { throw "V45 forbidden marker detected: $marker" }
           }
           New-Item -ItemType Directory -Force -Path reports | Out-Null
           @(
-            "strategy=XAUUSD_V44_H8_Early_Failure_Exit",
+            "strategy=XAUUSD_V45_H8_H9_Continuation_Expansion",
             "identity=PASS",
             "checked_out_sha=$((git rev-parse HEAD).Trim())",
             "ea_sha256=$((Get-FileHash -Algorithm SHA256 -Path $eaPath).Hash)",
@@ -144,22 +141,23 @@ jobs:
             "min_target_pips=400",
             "strict_intraday=true",
             "forced_trades=false",
-            "routes=CORE_CONTINUATION_SELL_08",
+            "routes=CORE_CONTINUATION_SELL_08|TEST_CONTINUATION_SELL_09",
             "rejected_cells_pruned=07|13|14",
             "entry_baseline=V41_H8_OPPORTUNITY",
-            "entry_experiment=none",
-            "exit_experiment=deterministic_early_failure",
-            "early_failure_bars=4",
-            "early_failure_min_progress_atr=0.10",
-            "early_failure_adverse_atr=0.30",
+            "entry_experiment=fresh_adjacent_hour_09",
+            "exit_experiment=none_structural_exits_restored",
             "structural_target_atr=4.20",
             "initial_stop_atr=0.66",
+            "break_even_trigger_atr=1.15",
+            "trail_start_atr=3.00",
+            "trail_distance_atr=1.20",
+            "max_hold_bars=24",
             "pipeline_budget_minutes=355",
             "download_budget_seconds=9000",
             "tester_budget_minutes=180",
             "bounded_downloader=true",
             "partial_cache_persistence=true"
-          ) | Set-Content reports/V44_SOURCE_IDENTITY.txt -Encoding UTF8
+          ) | Set-Content reports/V45_SOURCE_IDENTITY.txt -Encoding UTF8
 
       - name: Restore Dukascopy public XAU history
         id: dukascopy-cache-restore
@@ -167,9 +165,10 @@ jobs:
         continue-on-error: true
         with:
           path: .cache/dukascopy
-          key: dukascopy-xau-v44-recovery-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: dukascopy-xau-v45-recovery-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            dukascopy-xau-v44-recovery-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-
+            dukascopy-xau-v45-recovery-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-
+            dukascopy-xau-v45-recovery-${{ matrix.chunk }}-
             dukascopy-xau-v44-recovery-${{ matrix.chunk }}-
             dukascopy-xau-v43-recovery-${{ matrix.chunk }}-
             dukascopy-xau-v42-recovery-${{ matrix.chunk }}-
@@ -177,7 +176,6 @@ jobs:
             dukascopy-xau-v40-recovery-${{ matrix.chunk }}-
             dukascopy-xau-v39-recovery-${{ matrix.chunk }}-
             dukascopy-xau-v38-recovery-${{ matrix.chunk }}-
-            dukascopy-xau-v37-geometry-${{ matrix.chunk }}-
 
       - name: Capture source digests
         shell: pwsh
@@ -198,9 +196,9 @@ jobs:
             if (!(Test-Path $path)) { throw "Missing source: $path" }
             $digests[$path] = (Get-FileHash -Algorithm SHA256 -Path $path).Hash
           }
-          $digests | ConvertTo-Json | Set-Content (Join-Path $env:RUNNER_TEMP "v44-source-digests.json") -Encoding UTF8
+          $digests | ConvertTo-Json | Set-Content (Join-Path $env:RUNNER_TEMP "v45-source-digests.json") -Encoding UTF8
 
-      - name: Run committed V44 MT5 backtest
+      - name: Run committed V45 MT5 backtest
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-ea-v37-public-backtest.ps1
 
@@ -210,14 +208,14 @@ jobs:
         continue-on-error: true
         with:
           path: .cache/dukascopy
-          key: dukascopy-xau-v44-recovery-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: dukascopy-xau-v45-recovery-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Verify source immutability
         if: always()
         shell: pwsh
         run: |
-          $digestPath = Join-Path $env:RUNNER_TEMP "v44-source-digests.json"
-          if (!(Test-Path $digestPath)) { throw "V44 digest file missing" }
+          $digestPath = Join-Path $env:RUNNER_TEMP "v45-source-digests.json"
+          if (!(Test-Path $digestPath)) { throw "V45 digest file missing" }
           $expected = Get-Content $digestPath -Raw | ConvertFrom-Json
           $mutated = @()
           foreach ($property in $expected.PSObject.Properties) {
@@ -226,17 +224,17 @@ jobs:
             $actual = (Get-FileHash -Algorithm SHA256 -Path $path).Hash
             if ($actual -ne [string]$property.Value) { $mutated += $path }
           }
-          if ($mutated.Count -gt 0) { throw "V44 source mutation: $($mutated -join ', ')" }
-          "V44_SOURCE_IMMUTABILITY=PASS"
+          if ($mutated.Count -gt 0) { throw "V45 source mutation: $($mutated -join ', ')" }
+          "V45_SOURCE_IMMUTABILITY=PASS"
 
       - name: Analyze results
         if: always()
         shell: pwsh
         run: |
           if (!(Test-Path reports)) { New-Item -ItemType Directory -Force -Path reports | Out-Null }
-          python scripts/analyze-v27-results.py reports --deposit $env:BT_DEPOSIT | Tee-Object -FilePath reports/V44_ANALYSIS_CONSOLE.json
+          python scripts/analyze-v27-results.py reports --deposit $env:BT_DEPOSIT | Tee-Object -FilePath reports/V45_ANALYSIS_CONSOLE.json
 
-      - name: Export compact V44 summary
+      - name: Export compact V45 summary
         if: always()
         shell: pwsh
         run: |
@@ -248,14 +246,14 @@ jobs:
             $summary = "{0}-T{1}-PF{2}-WR{3}-NET{4:N0}" -f $a.verdict,[int]$a.overall.trades,$pf,$wr,[double]$a.overall.net_profit
             $summary = $summary -replace '[^A-Za-z0-9_.-]','_'
           }
-          "V44_SUMMARY=$summary" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
-          $summary | Set-Content reports/V44_COMPACT_SUMMARY.txt -Encoding UTF8
+          "V45_SUMMARY=$summary" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          $summary | Set-Content reports/V45_COMPACT_SUMMARY.txt -Encoding UTF8
 
       - name: Upload artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: EA-V44-${{ matrix.chunk }}-${{ env.V44_SUMMARY }}-${{ github.run_number }}-${{ github.sha }}
+          name: EA-V45-${{ matrix.chunk }}-${{ env.V45_SUMMARY }}-${{ github.run_number }}-${{ github.sha }}
           path: reports/**
           if-no-files-found: error
           retention-days: 14
