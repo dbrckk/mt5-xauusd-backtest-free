@@ -178,7 +178,6 @@ jobs:
             dukascopy-xau-v39-recovery-${{ matrix.chunk }}-
             dukascopy-xau-v38-recovery-${{ matrix.chunk }}-
             dukascopy-xau-v37-geometry-${{ matrix.chunk }}-
-            dukascopy-xau-v35-sell-structure-${{ matrix.chunk }}-
 
       - name: Capture source digests
         shell: pwsh
