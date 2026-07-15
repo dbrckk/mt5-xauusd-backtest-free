@@ -172,27 +172,37 @@ jobs:
             "download_budget_seconds=9000",
             "tester_budget_minutes=180",
             "bounded_downloader=true",
-            "partial_cache_persistence=true"
+            "partial_cache_persistence=true",
+            "cache_generation=v51-g1",
+            "cache_non_regression_guard=true"
           ) | Set-Content reports/V50_SOURCE_IDENTITY.txt -Encoding UTF8
 
-      - name: Restore Dukascopy public XAU history
+      - name: Restore monotonic Dukascopy cache generation
         id: dukascopy-cache-restore
         uses: actions/cache/restore@v4
         continue-on-error: true
         with:
           path: .cache/dukascopy
-          key: dukascopy-xau-v50-recovery-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: dukascopy-xau-v51-g1-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}
           restore-keys: |
             dukascopy-xau-v50-recovery-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-
-            dukascopy-xau-v50-recovery-${{ matrix.chunk }}-
             dukascopy-xau-v49-recovery-${{ matrix.chunk }}-
             dukascopy-xau-v48-recovery-${{ matrix.chunk }}-
             dukascopy-xau-v47-recovery-${{ matrix.chunk }}-
             dukascopy-xau-v46-recovery-${{ matrix.chunk }}-
             dukascopy-xau-v45-recovery-${{ matrix.chunk }}-
-            dukascopy-xau-v44-recovery-${{ matrix.chunk }}-
-            dukascopy-xau-v43-recovery-${{ matrix.chunk }}-
-            dukascopy-xau-v42-recovery-${{ matrix.chunk }}-
+
+      - name: Snapshot restored cache
+        id: cache-before
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem .cache/dukascopy -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Length -gt 0 })
+          $bytes = ($files | Measure-Object Length -Sum).Sum
+          if ($null -eq $bytes) { $bytes = 0 }
+          "files=$($files.Count)" | Out-File $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "bytes=$bytes" | Out-File $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "CACHE_RESTORED_FILES=$($files.Count)"
+          "CACHE_RESTORED_BYTES=$bytes"
 
       - name: Capture source digests
         shell: pwsh
@@ -219,13 +229,37 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-ea-v37-public-backtest.ps1
 
-      - name: Save cumulative Dukascopy cache
+      - name: Enforce cache non-regression
+        id: cache-guard
         if: always()
+        shell: pwsh
+        run: |
+          $beforeFiles = [int64]"${{ steps.cache-before.outputs.files }}"
+          $beforeBytes = [int64]"${{ steps.cache-before.outputs.bytes }}"
+          $files = @(Get-ChildItem .cache/dukascopy -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Length -gt 0 })
+          $afterBytes = ($files | Measure-Object Length -Sum).Sum
+          if ($null -eq $afterBytes) { $afterBytes = 0 }
+          $afterFiles = $files.Count
+          $allow = ($afterFiles -ge $beforeFiles -and [int64]$afterBytes -ge $beforeBytes)
+          "allow_save=$($allow.ToString().ToLowerInvariant())" | Out-File $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          New-Item -ItemType Directory -Force -Path reports | Out-Null
+          @(
+            "generation=v51-g1",
+            "restored_files=$beforeFiles",
+            "restored_bytes=$beforeBytes",
+            "final_files=$afterFiles",
+            "final_bytes=$afterBytes",
+            "non_regression=$($allow.ToString().ToLowerInvariant())"
+          ) | Set-Content reports/V50_CACHE_MANIFEST.txt -Encoding UTF8
+          if (!$allow) { throw "Dukascopy cache regression detected: files $beforeFiles->$afterFiles, bytes $beforeBytes->$afterBytes" }
+
+      - name: Save monotonic Dukascopy cache generation
+        if: always() && steps.cache-guard.outputs.allow_save == 'true'
         uses: actions/cache/save@v4
-        continue-on-error: true
+        continue-on-error: false
         with:
           path: .cache/dukascopy
-          key: dukascopy-xau-v50-recovery-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: dukascopy-xau-v51-g1-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}
 
       - name: Verify source immutability
         if: always()
