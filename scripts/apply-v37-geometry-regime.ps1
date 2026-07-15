@@ -134,7 +134,7 @@ $ea = [regex]::Replace($ea, $continuationPattern, $stateEntry.TrimEnd(), 1)
 
 $ea = $ea.Replace('string comment="V35 "+direction+" "+candidate.setup;', 'string comment="V50 "+direction+" "+candidate.setup;')
 $ea = $ea.Replace('"v35_sell_structure route="+activeRoute', '"v50_h8_pullback_break_retest route="+activeRoute')
-$ea = $ea.Replace('V35_SELL_STRUCTURE_QUALITY_GATE risk_normalized=true max_trades_week=4 min_target_pips=400 h1_aligned_h4_aligned=true weak_pullback_buy_pruned=true routes=CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14 edge_routes_pruned=true', 'V50_H8_PULLBACK_BREAK_RETEST_STATE_MACHINE risk_normalized=true max_trades_week=4 min_target_pips=400 deterministic_state_machine=true h1_bearish_h4_not_bullish=true routes=STATE_PULLBACK_REJECTION_SELL_08|STATE_BREAK_RETEST_SELL_08 rejected_cells_pruned=07|10|11|12|13|14 rejected_v49_states=STATE_STRUCTURE_BREAK_SELL_09|STATE_SWEEP_FAILURE_SELL_09 structural_exits=true')
+$ea = $ea.Replace('V35_SELL_STRUCTURE_QUALITY_GATE risk_normalized=true max_trades_week=4 min_target_pips=400 h1_aligned_h4_aligned=true weak_pullback_buy_pruned=true routes=CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14 edge_routes_pruned=true', 'V50_H8_PULLBACK_BREAK_RETEST_STATE_MACHINE risk_normalized=true max_trades_week=4 min_target_pips=400 deterministic_state_machine=true h1_bearish_h4_not_bullish=true routes=STATE_PULLBACK_REJECTION_SELL_08|STATE_BREAK_RETEST_SELL_08 rejected_cells_pruned=07|10|11|12|13|14 rejected_v49_hour09_states=true structural_exits=true')
 
 $required = @(
    'V50_H8_PULLBACK_BREAK_RETEST_STATE_MACHINE',
