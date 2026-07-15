@@ -130,10 +130,8 @@ $stateLines = @'
 if (!$ea.Contains($biasAnchor)) { throw "V49 cannot find HTF bias insertion point." }
 $ea = $ea.Replace($biasAnchor, $stateLines.TrimEnd())
 
-$continuationOld = '      if(rates[1].close<rates[2].low && rates[2].close<rates[2].open && fast1<fast2 && bodyRatio>=0.38 && volumeRatio>=MinVolumeRatio)`r`n         Consider(-1,"CONTINUATION",sellBase+18,atr,now.hour,rsi,adx,volumeRatio,bodyRatio,h1Bias,h4Bias,sellCandidate);'
-if (!$ea.Contains($continuationOld)) {
-   $continuationOld = "      if(rates[1].close<rates[2].low && rates[2].close<rates[2].open && fast1<fast2 && bodyRatio>=0.38 && volumeRatio>=MinVolumeRatio)`n         Consider(-1,`"CONTINUATION`",sellBase+18,atr,now.hour,rsi,adx,volumeRatio,bodyRatio,h1Bias,h4Bias,sellCandidate);"
-}
+# Match the V35 continuation entry independently of CRLF/LF normalization and indentation.
+$continuationPattern = '(?ms)^[ \t]*if\(rates\[1\]\.close<rates\[2\]\.low\s*&&\s*rates\[2\]\.close<rates\[2\]\.open\s*&&\s*fast1<fast2\s*&&\s*bodyRatio>=0\.38\s*&&\s*volumeRatio>=MinVolumeRatio\)\s*\r?\n[ \t]*Consider\(-1,"CONTINUATION",sellBase\+18,atr,now\.hour,rsi,adx,volumeRatio,bodyRatio,h1Bias,h4Bias,sellCandidate\);'
 $stateEntry = @'
       if(structureBreakState && bodyRatio>=MinBodyRatio && volumeRatio>=MinVolumeRatio)
          Consider(-1,"STRUCTURE_BREAK",sellBase+22,atr,now.hour,rsi,adx,volumeRatio,bodyRatio,h1Bias,h4Bias,sellCandidate);
@@ -141,8 +139,9 @@ $stateEntry = @'
       if(sweepFailureState && bodyRatio>=MinBodyRatio && volumeRatio>=MinVolumeRatio)
          Consider(-1,"SWEEP_FAILURE",sellBase+20,atr,now.hour,rsi,adx,volumeRatio,bodyRatio,h1Bias,h4Bias,sellCandidate);
 '@
-if (!$ea.Contains($continuationOld)) { throw "V49 cannot find continuation sell condition." }
-$ea = $ea.Replace($continuationOld, $stateEntry.TrimEnd())
+$continuationMatches = [regex]::Matches($ea, $continuationPattern)
+if ($continuationMatches.Count -ne 1) { throw "V49 expected exactly one continuation sell condition, found $($continuationMatches.Count)." }
+$ea = [regex]::Replace($ea, $continuationPattern, $stateEntry.TrimEnd(), 1)
 
 $ea = $ea.Replace('string comment="V35 "+direction+" "+candidate.setup;', 'string comment="V49 "+direction+" "+candidate.setup;')
 $ea = $ea.Replace('"v35_sell_structure route="+activeRoute', '"v49_regime_structure_state route="+activeRoute')
