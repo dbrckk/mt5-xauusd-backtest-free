@@ -9,7 +9,8 @@ HTTP acquisition so each hosted run:
   first unavailable chronological batch;
 * performs one bounded request per slot and retry round;
 * rotates the missing-slot order between GitHub run attempts;
-* persists every successfully downloaded raw BI5 hour for later runs.
+* persists every successfully downloaded raw BI5 hour for later runs;
+* evicts corrupt cached hours before retrying them so cache quality can recover.
 """
 
 from __future__ import annotations
@@ -52,6 +53,26 @@ def read_cached_hour(day, hour):
     except OSError as exc:
         return day, hour, None, f"cache_read_failed:{exc}", url
     return day, hour, None, "cache_empty", url
+
+
+def evict_cached_hour(day, hour) -> bool:
+    """Remove a cached payload that failed canonical BI5 parsing.
+
+    A non-empty but corrupt payload must not keep short-circuiting network
+    acquisition on every retry and future workflow generation. Deletion is
+    limited to the cache directory; repository sources and input datasets are
+    never modified.
+    """
+    path = mod.cache_path_for(day, hour)
+    if path is None:
+        return False
+    try:
+        if path.exists():
+            path.unlink()
+            return True
+    except OSError as exc:
+        print(f"PUBLIC_HISTORY_CACHE_EVICT_FAILED={path}|{type(exc).__name__}:{exc}")
+    return False
 
 
 def fetch_hour_once(day, hour, deadline: float):
@@ -150,6 +171,7 @@ def fetch_and_process_slots_bounded(slots, deadline_epoch: float, bars):
     print(f"PUBLIC_HISTORY_MISSING_SLOTS_INITIAL={len(missing_slots)}")
 
     corrupt_or_unreadable = []
+    evicted_corrupt = 0
     for day, hour in cached_slots:
         d, h, raw, status, url = read_cached_hour(day, hour)
         ticks, ok, empty, retry, missing = record_payload(
@@ -160,8 +182,11 @@ def fetch_and_process_slots_bounded(slots, deadline_epoch: float, bars):
         empty_market_hours += empty
         missing_404 += missing
         if retry:
+            if evict_cached_hour(day, hour):
+                evicted_corrupt += 1
             corrupt_or_unreadable.append((day, hour))
 
+    print(f"PUBLIC_HISTORY_CACHE_CORRUPT_EVICTED={evicted_corrupt}")
     pending = corrupt_or_unreadable + missing_slots
     downloaded_this_run = 0
 
@@ -199,6 +224,8 @@ def fetch_and_process_slots_bounded(slots, deadline_epoch: float, bars):
                 if status == "downloaded" and ok:
                     downloaded_this_run += 1
                 if should_retry:
+                    if raw is not None:
+                        evict_cached_hour(d, h)
                     retry.append((d, h))
 
         pending = retry
