@@ -168,23 +168,21 @@ jobs:
             "trail_start_atr=3.00",
             "trail_distance_atr=1.20",
             "max_hold_bars=24",
-            "pipeline_budget_minutes=355",
-            "download_budget_seconds=9000",
-            "tester_budget_minutes=180",
-            "bounded_downloader=true",
-            "partial_cache_persistence=true",
-            "cache_generation=v51-g1",
+            "cache_generation=v51-g2",
+            "cache_unique_keys=true",
             "cache_non_regression_guard=true"
           ) | Set-Content reports/V50_SOURCE_IDENTITY.txt -Encoding UTF8
 
-      - name: Restore monotonic Dukascopy cache generation
+      - name: Restore latest cumulative Dukascopy cache
         id: dukascopy-cache-restore
         uses: actions/cache/restore@v4
         continue-on-error: true
         with:
           path: .cache/dukascopy
-          key: dukascopy-xau-v51-g1-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}
+          key: dukascopy-xau-v51-g2-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
+            dukascopy-xau-v51-g2-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-
+            dukascopy-xau-v51-g1-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}
             dukascopy-xau-v50-recovery-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-
             dukascopy-xau-v49-recovery-${{ matrix.chunk }}-
             dukascopy-xau-v48-recovery-${{ matrix.chunk }}-
@@ -244,7 +242,9 @@ jobs:
           "allow_save=$($allow.ToString().ToLowerInvariant())" | Out-File $env:GITHUB_OUTPUT -Encoding utf8 -Append
           New-Item -ItemType Directory -Force -Path reports | Out-Null
           @(
-            "generation=v51-g1",
+            "generation=v51-g2",
+            "restore_key=${{ steps.dukascopy-cache-restore.outputs.cache-matched-key }}",
+            "save_key=dukascopy-xau-v51-g2-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-${{ github.run_id }}-${{ github.run_attempt }}",
             "restored_files=$beforeFiles",
             "restored_bytes=$beforeBytes",
             "final_files=$afterFiles",
@@ -253,13 +253,12 @@ jobs:
           ) | Set-Content reports/V50_CACHE_MANIFEST.txt -Encoding UTF8
           if (!$allow) { throw "Dukascopy cache regression detected: files $beforeFiles->$afterFiles, bytes $beforeBytes->$afterBytes" }
 
-      - name: Save monotonic Dukascopy cache generation
+      - name: Save new cumulative Dukascopy cache generation
         if: always() && steps.cache-guard.outputs.allow_save == 'true'
         uses: actions/cache/save@v4
-        continue-on-error: false
         with:
           path: .cache/dukascopy
-          key: dukascopy-xau-v51-g1-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}
+          key: dukascopy-xau-v51-g2-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Verify source immutability
         if: always()
