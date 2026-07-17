@@ -1,6 +1,7 @@
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+# Cache accumulation note: a fresh workflow run is required so GitHub Actions can restore caches saved by prior rerun attempts.
 $eaPath = "MQL5/Experts/XAUUSD_V27_Clean_MultiSetup.mq5"
 if (!(Test-Path $eaPath)) { throw "EA source missing: $eaPath" }
 
