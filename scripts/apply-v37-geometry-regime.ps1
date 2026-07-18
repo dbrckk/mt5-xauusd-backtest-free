@@ -1,20 +1,16 @@
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-# Cache accumulation note: a fresh workflow run is required so GitHub Actions can restore caches saved by prior rerun attempts.
 $eaPath = "MQL5/Experts/XAUUSD_V27_Clean_MultiSetup.mq5"
 if (!(Test-Path $eaPath)) { throw "EA source missing: $eaPath" }
 
-# Rebuild deterministically from the committed V35 sell-only profile.
 pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/apply-v35-sell-structure.ps1
 $ea = Get-Content $eaPath -Raw
 
-# Identity.
-$ea = $ea.Replace('#property version "2.94"', '#property version "3.08"')
+$ea = $ea.Replace('#property version "2.94"', '#property version "3.09"')
 $ea = $ea.Replace('V35 Sell Structure Quality Gate: weak pullback route pruned', 'V50 Hour-8 Pullback Rejection and Break-Retest State Machine')
 $ea = $ea.Replace('input string CSVJournalName="V35_SELL_STRUCTURE_journal.csv";', 'input string CSVJournalName="V50_H8_PULLBACK_BREAK_RETEST_journal.csv";')
 
-# Use only hour 08. Rejected hours 07/10/11/12/13/14 remain absent, and rejected V49 hour-09 states are removed.
 $routeOld = @'
    if(setup=="CONTINUATION" && dir<0 && hour>=7 && hour<9)
    {
@@ -81,7 +77,6 @@ bool RouteQuality(string setup,int dir,double rsi,double adx,double volumeRatio,
 if (!$ea.Contains($routeQualityV35)) { throw "V50 cannot find V35 RouteQuality block." }
 $ea = $ea.Replace($routeQualityV35, $routeQualityV50)
 
-# Preserve asymmetric structural exits, with deterministic risk and strict intraday controls unchanged.
 $ea = $ea.Replace('input double MinSignalScore=91.0;', 'input double MinSignalScore=68.0;')
 $ea = $ea.Replace('input double MinADX=28.0;', 'input double MinADX=15.0;')
 $ea = $ea.Replace('input double MaxSpreadATRFraction=0.045;', 'input double MaxSpreadATRFraction=0.075;')
@@ -95,7 +90,34 @@ $ea = $ea.Replace('input double TrailDistanceATR=1.10;', 'input double TrailDist
 $ea = $ea.Replace('input int MaxHoldBars=28;', 'input int MaxHoldBars=24;')
 $ea = $ea.Replace('input double TimeExitMinProgressATR=0.45;', 'input double TimeExitMinProgressATR=0.30;')
 
-# Deterministic architecture: bearish HTF regime, local trend, then either a pullback rejection or a break/retest.
+$indicatorOld = @'
+   double fast1;
+   double fast2;
+   double slow1;
+   double trend;
+   double rsi;
+   double atr;
+   double adx;
+   if(!One(fH,0,1,fast1) || !One(fH,0,2,fast2) || !One(sH,0,1,slow1) || !One(tH,0,1,trend) ||
+      !One(rH,0,1,rsi) || !One(aH,0,1,atr) || !One(dH,0,1,adx) || atr<=0)
+      return false;
+'@
+$indicatorNew = @'
+   double fast1;
+   double fast2;
+   double slow1;
+   double slow2;
+   double trend;
+   double rsi;
+   double atr;
+   double adx;
+   if(!One(fH,0,1,fast1) || !One(fH,0,2,fast2) || !One(sH,0,1,slow1) || !One(sH,0,2,slow2) || !One(tH,0,1,trend) ||
+      !One(rH,0,1,rsi) || !One(aH,0,1,atr) || !One(dH,0,1,adx) || atr<=0)
+      return false;
+'@
+if (!$ea.Contains($indicatorOld)) { throw "V50 cannot find indicator acquisition block." }
+$ea = $ea.Replace($indicatorOld, $indicatorNew)
+
 $biasAnchor = @'
    int h1Bias=Bias(PERIOD_H1);
    int h4Bias=Bias(PERIOD_H4);
@@ -103,6 +125,7 @@ $biasAnchor = @'
 $stateLines = @'
    int h1Bias=Bias(PERIOD_H1);
    int h4Bias=Bias(PERIOD_H4);
+   double spread=(double)SymbolInfoInteger(Sym,SYMBOL_SPREAD)*SymbolInfoDouble(Sym,SYMBOL_POINT);
    double closeLocation=(rates[1].close-rates[1].low)/range;
    double bearishDisplacement=(rates[1].open-rates[1].close)/atr;
    double priorStructureLow=LL(rates,3,6);
@@ -129,36 +152,19 @@ $stateEntry = @'
       if(breakRetestState && bodyRatio>=MinBodyRatio && volumeRatio>=MinVolumeRatio)
          Consider(-1,"BREAK_RETEST",sellBase+24,atr,now.hour,rsi,adx,volumeRatio,bodyRatio,h1Bias,h4Bias,sellCandidate);
 '@
-$continuationMatches = [regex]::Matches($ea, $continuationPattern)
-if ($continuationMatches.Count -ne 1) { throw "V50 expected exactly one continuation sell condition, found $($continuationMatches.Count)." }
+$matches = [regex]::Matches($ea, $continuationPattern)
+if ($matches.Count -ne 1) { throw "V50 expected exactly one continuation sell condition, found $($matches.Count)." }
 $ea = [regex]::Replace($ea, $continuationPattern, $stateEntry.TrimEnd(), 1)
 
 $ea = $ea.Replace('string comment="V35 "+direction+" "+candidate.setup;', 'string comment="V50 "+direction+" "+candidate.setup;')
 $ea = $ea.Replace('"v35_sell_structure route="+activeRoute', '"v50_h8_pullback_break_retest route="+activeRoute')
 $ea = $ea.Replace('V35_SELL_STRUCTURE_QUALITY_GATE risk_normalized=true max_trades_week=4 min_target_pips=400 h1_aligned_h4_aligned=true weak_pullback_buy_pruned=true routes=CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14 edge_routes_pruned=true', 'V50_H8_PULLBACK_BREAK_RETEST_STATE_MACHINE risk_normalized=true max_trades_week=4 min_target_pips=400 deterministic_state_machine=true h1_bearish_h4_not_bullish=true routes=STATE_PULLBACK_REJECTION_SELL_08|STATE_BREAK_RETEST_SELL_08 rejected_cells_pruned=07|10|11|12|13|14 rejected_v49_hour09_states=true structural_exits=true')
 
-$required = @(
-   'V50_H8_PULLBACK_BREAK_RETEST_STATE_MACHINE',
-   'deterministic_state_machine=true',
-   'pullbackRejectionState',
-   'breakRetestState',
-   'pullbackTouched',
-   'priorBreak',
-   'STATE_PULLBACK_REJECTION_SELL_08',
-   'STATE_BREAK_RETEST_SELL_08',
-   'MaxTradesPerWeek=4',
-   'MinTargetPips=400.0',
-   'RiskPercent=0.20'
-)
-foreach ($marker in $required) {
-   if (!$ea.Contains($marker)) { throw "V50 marker missing: $marker" }
-}
+$required = @('V50_H8_PULLBACK_BREAK_RETEST_STATE_MACHINE','deterministic_state_machine=true','pullbackRejectionState','breakRetestState','pullbackTouched','priorBreak','STATE_PULLBACK_REJECTION_SELL_08','STATE_BREAK_RETEST_SELL_08','MaxTradesPerWeek=4','MinTargetPips=400.0','RiskPercent=0.20','double slow2;','SYMBOL_SPREAD')
+foreach ($marker in $required) { if (!$ea.Contains($marker)) { throw "V50 marker missing: $marker" } }
 
-# Reject only legacy identifiers that cannot collide with valid V50 state names.
 $forbidden = @('CORE_CONTINUATION_SELL_07_08','CORE_SWEEP_SELL_13_14','CORE_PULLBACK_BUY_15','EDGE_PULLBACK_SELL_15','EDGE_CONTINUATION_BUY_07_08','STATE_STRUCTURE_BREAK_SELL_09','STATE_SWEEP_FAILURE_SELL_09','STATE_STRUCTURE_BREAK_SELL_08','STATE_SWEEP_FAILURE_SELL_08','TEST_CONTINUATION_SELL_09','TEST_CONTINUATION_SELL_10','TEST_CONTINUATION_SELL_11','TEST_CONTINUATION_SELL_12','ZLEMA_AUTO','Zlema(','boundedRetest','UseEarlyFailureExit','EARLY_FAILURE_ADVERSE','EARLY_FAILURE_STALLED')
-foreach ($marker in $forbidden) {
-   if ($ea.Contains($marker)) { throw "V50 forbidden marker present: $marker" }
-}
+foreach ($marker in $forbidden) { if ($ea.Contains($marker)) { throw "V50 forbidden marker present: $marker" } }
 
 Set-Content -Path $eaPath -Value $ea -Encoding UTF8
-Write-Host "V50 hour-8 pullback rejection and break-retest transform applied to $eaPath"
+Write-Host "V50 compile-safe hour-8 pullback rejection and break-retest transform applied to $eaPath"
