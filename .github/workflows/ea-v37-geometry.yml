@@ -1,23 +1,8 @@
-name: EA V50 H8 PULLBACK BREAK-RETEST VALIDATION
-run-name: V50 deterministic hour-8 pullback/break-retest · ${{ github.ref_name }} · ${{ github.sha }}
+name: EA V50 DETERMINISTIC DATA PIPELINE VALIDATION
+run-name: V50 exact-cache pipeline · PR ${{ github.event.pull_request.number }} · ${{ github.sha }}
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - v38-validation-pipeline-recovery
-    paths:
-      - ".github/workflows/ea-v37-geometry.yml"
-      - "MQL5/Experts/XAUUSD_V27_Clean_MultiSetup.mq5"
-      - "MQL5/Experts/ImportCustomRatesEA.mq5"
-      - "scripts/run-ea-v27-public-backtest.ps1"
-      - "scripts/run-ea-v35-public-backtest.ps1"
-      - "scripts/run-ea-v37-public-backtest.ps1"
-      - "scripts/download_public_xau_m1.py"
-      - "scripts/download_public_xau_m1_bounded.py"
-      - "scripts/analyze-v27-results.py"
-      - "scripts/apply-v35-sell-structure.ps1"
-      - "scripts/apply-v37-geometry-regime.ps1"
   pull_request:
     branches: [main]
     paths:
@@ -29,6 +14,7 @@ on:
       - "scripts/run-ea-v37-public-backtest.ps1"
       - "scripts/download_public_xau_m1.py"
       - "scripts/download_public_xau_m1_bounded.py"
+      - "scripts/build_dukascopy_cache_manifest.py"
       - "scripts/analyze-v27-results.py"
       - "scripts/apply-v35-sell-structure.ps1"
       - "scripts/apply-v37-geometry-regime.ps1"
@@ -37,14 +23,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: v50-pipeline-${{ github.ref }}-${{ github.event_name }}
+  group: v50-exact-cache-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   validate:
     name: validate (${{ matrix.chunk }}, M15, ${{ matrix.from_date }}, ${{ matrix.to_date }})
     runs-on: windows-latest
-    timeout-minutes: 355
+    timeout-minutes: 430
     strategy:
       fail-fast: false
       max-parallel: 4
@@ -53,15 +39,23 @@ jobs:
           - chunk: Y0_OOS
             from_date: "2022.06.21"
             to_date: "2023.06.21"
+            seed_key: "dukascopy-xau-v51-g2-Y0_OOS-2022.06.21-2023.06.21-29638556716-1"
+            baseline_valid_hours: 5587
           - chunk: Y1
             from_date: "2023.06.21"
             to_date: "2024.06.21"
+            seed_key: "dukascopy-xau-v51-g2-Y1-2023.06.21-2024.06.21-29638556716-1"
+            baseline_valid_hours: 4937
           - chunk: Y2
             from_date: "2024.06.21"
             to_date: "2025.06.21"
+            seed_key: "dukascopy-xau-v51-g2-Y2-2024.06.21-2025.06.21-29638556716-1"
+            baseline_valid_hours: 5472
           - chunk: Y3
             from_date: "2025.06.21"
             to_date: "2026.06.21"
+            seed_key: "dukascopy-xau-v51-g2-Y3-2025.06.21-2026.06.21-29638556716-1"
+            baseline_valid_hours: 5453
 
     env:
       BT_SYMBOL: XAU_PUBLIC
@@ -71,12 +65,12 @@ jobs:
       BT_DEPOSIT: "15000"
       BT_LEVERAGE: "1:100"
       BT_MODEL: "0"
-      BT_TIMEOUT_MINUTES: "180"
-      PUBLIC_FETCH_TIMEOUT_SECONDS: "30"
+      BT_TIMEOUT_MINUTES: "150"
+      PUBLIC_FETCH_TIMEOUT_SECONDS: "20"
       PUBLIC_FETCH_RETRIES: "5"
-      PUBLIC_FETCH_RETRY_ROUNDS: "3"
-      PUBLIC_FETCH_WORKERS: "12"
-      PUBLIC_MAX_DOWNLOAD_SECONDS: "9000"
+      PUBLIC_FETCH_RETRY_ROUNDS: "5"
+      PUBLIC_FETCH_WORKERS: "20"
+      PUBLIC_MAX_DOWNLOAD_SECONDS: "10800"
       PUBLIC_MAX_HISTORY_DAYS: "370"
       PUBLIC_MIN_REQUIRED_BARS: "250000"
       PUBLIC_MIN_REQUIRED_DAYS_WITH_TICKS: "220"
@@ -159,48 +153,40 @@ jobs:
             "forced_trades=false",
             "routes=STATE_PULLBACK_REJECTION_SELL_08|STATE_BREAK_RETEST_SELL_08",
             "rejected_cells_pruned=07|10|11|12|13|14",
-            "rejected_v49_state_cells=STATE_STRUCTURE_BREAK_SELL_09|STATE_SWEEP_FAILURE_SELL_09",
-            "entry_architecture=HTF_REGIME_H8_PULLBACK_REJECTION_OR_BREAK_RETEST",
-            "exit_architecture=STRUCTURAL_ASYMMETRIC_V45_PROFILE",
-            "structural_target_atr=4.20",
-            "initial_stop_atr=0.66",
-            "break_even_trigger_atr=1.15",
-            "trail_start_atr=3.00",
-            "trail_distance_atr=1.20",
-            "max_hold_bars=24",
-            "cache_generation=v51-g2",
-            "cache_unique_keys=true",
-            "cache_non_regression_guard=true"
+            "cache_generation=v52-exact-seed",
+            "cache_restore_mode=exact_key_only",
+            "cache_seed_key=${{ matrix.seed_key }}"
           ) | Set-Content reports/V50_SOURCE_IDENTITY.txt -Encoding UTF8
 
-      - name: Restore latest cumulative Dukascopy cache
+      - name: Restore deterministic best-known Dukascopy cache
         id: dukascopy-cache-restore
         uses: actions/cache/restore@v4
-        continue-on-error: true
         with:
           path: .cache/dukascopy
-          key: dukascopy-xau-v51-g2-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            dukascopy-xau-v51-g2-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-
-            dukascopy-xau-v51-g1-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}
-            dukascopy-xau-v50-recovery-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-
-            dukascopy-xau-v49-recovery-${{ matrix.chunk }}-
-            dukascopy-xau-v48-recovery-${{ matrix.chunk }}-
-            dukascopy-xau-v47-recovery-${{ matrix.chunk }}-
-            dukascopy-xau-v46-recovery-${{ matrix.chunk }}-
-            dukascopy-xau-v45-recovery-${{ matrix.chunk }}-
+          key: ${{ matrix.seed_key }}
+          fail-on-cache-miss: true
 
-      - name: Snapshot restored cache
-        id: cache-before
+      - name: Canonically validate restored cache baseline
+        id: baseline-manifest
         shell: pwsh
+        env:
+          CACHE_MANIFEST_SOURCE_KEY: ${{ matrix.seed_key }}
+          CACHE_MANIFEST_ENFORCE_THRESHOLD: "false"
         run: |
-          $files = @(Get-ChildItem .cache/dukascopy -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Length -gt 0 })
-          $bytes = ($files | Measure-Object Length -Sum).Sum
-          if ($null -eq $bytes) { $bytes = 0 }
-          "files=$($files.Count)" | Out-File $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          "bytes=$bytes" | Out-File $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          "CACHE_RESTORED_FILES=$($files.Count)"
-          "CACHE_RESTORED_BYTES=$bytes"
+          New-Item -ItemType Directory -Force -Path reports | Out-Null
+          python scripts/build_dukascopy_cache_manifest.py $env:BT_FROM_DATE $env:BT_TO_DATE $env:PUBLIC_CACHE_DIR reports/V50_CACHE_BASELINE.json
+          if ($LASTEXITCODE -ne 0) { throw "Restored cache contains invalid BI5 payloads" }
+          $m = Get-Content reports/V50_CACHE_BASELINE.json -Raw | ConvertFrom-Json
+          $expectedBaseline = [int64]"${{ matrix.baseline_valid_hours }}"
+          if ([int64]$m.canonical_valid_hour_count -lt $expectedBaseline) {
+            throw "Deterministic cache regression: canonical valid hours $($m.canonical_valid_hour_count) below known baseline $expectedBaseline"
+          }
+          if ([int64]$m.corrupt_hour_count -ne 0) { throw "Corrupt BI5 payloads in restored cache: $($m.corrupt_hour_count)" }
+          if ([string]::IsNullOrWhiteSpace([string]$m.cache_tree_sha256)) { throw "Restored cache digest missing" }
+          "BASELINE_VALID_HOURS=$($m.canonical_valid_hour_count)"
+          "BASELINE_EXPECTED_HOURS=$($m.expected_hour_count)"
+          "BASELINE_COVERAGE=$($m.coverage_ratio)"
+          "BASELINE_DIGEST=$($m.cache_tree_sha256)"
 
       - name: Capture source digests
         shell: pwsh
@@ -213,6 +199,7 @@ jobs:
             "scripts/run-ea-v37-public-backtest.ps1",
             "scripts/download_public_xau_m1.py",
             "scripts/download_public_xau_m1_bounded.py",
+            "scripts/build_dukascopy_cache_manifest.py",
             "scripts/analyze-v27-results.py",
             "scripts/apply-v37-geometry-regime.ps1"
           )
@@ -223,42 +210,43 @@ jobs:
           }
           $digests | ConvertTo-Json | Set-Content (Join-Path $env:RUNNER_TEMP "v50-source-digests.json") -Encoding UTF8
 
-      - name: Run committed V50 MT5 backtest
+      - name: Run bounded real-data V50 MT5 backtest
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run-ea-v37-public-backtest.ps1
 
-      - name: Enforce cache non-regression
+      - name: Build final canonical cache manifest and enforce non-regression
         id: cache-guard
         if: always()
         shell: pwsh
+        env:
+          CACHE_MANIFEST_SOURCE_KEY: ${{ matrix.seed_key }}
+          CACHE_MANIFEST_ENFORCE_THRESHOLD: "true"
         run: |
-          $beforeFiles = [int64]"${{ steps.cache-before.outputs.files }}"
-          $beforeBytes = [int64]"${{ steps.cache-before.outputs.bytes }}"
-          $files = @(Get-ChildItem .cache/dukascopy -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Length -gt 0 })
-          $afterBytes = ($files | Measure-Object Length -Sum).Sum
-          if ($null -eq $afterBytes) { $afterBytes = 0 }
-          $afterFiles = $files.Count
-          $allow = ($afterFiles -ge $beforeFiles -and [int64]$afterBytes -ge $beforeBytes)
-          "allow_save=$($allow.ToString().ToLowerInvariant())" | Out-File $env:GITHUB_OUTPUT -Encoding utf8 -Append
           New-Item -ItemType Directory -Force -Path reports | Out-Null
-          @(
-            "generation=v51-g2",
-            "restore_key=${{ steps.dukascopy-cache-restore.outputs.cache-matched-key }}",
-            "save_key=dukascopy-xau-v51-g2-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-${{ github.run_id }}-${{ github.run_attempt }}",
-            "restored_files=$beforeFiles",
-            "restored_bytes=$beforeBytes",
-            "final_files=$afterFiles",
-            "final_bytes=$afterBytes",
-            "non_regression=$($allow.ToString().ToLowerInvariant())"
-          ) | Set-Content reports/V50_CACHE_MANIFEST.txt -Encoding UTF8
-          if (!$allow) { throw "Dukascopy cache regression detected: files $beforeFiles->$afterFiles, bytes $beforeBytes->$afterBytes" }
+          python scripts/build_dukascopy_cache_manifest.py $env:BT_FROM_DATE $env:BT_TO_DATE $env:PUBLIC_CACHE_DIR reports/V50_CACHE_MANIFEST.json
+          $manifestExit = $LASTEXITCODE
+          if (!(Test-Path reports/V50_CACHE_MANIFEST.json)) { throw "Final canonical cache manifest missing" }
+          $m = Get-Content reports/V50_CACHE_MANIFEST.json -Raw | ConvertFrom-Json
+          $baseline = [int64]"${{ matrix.baseline_valid_hours }}"
+          $valid = [int64]$m.canonical_valid_hour_count
+          $expected = [int64]$m.expected_hour_count
+          $allow = ($valid -ge $baseline -and [int64]$m.corrupt_hour_count -eq 0 -and [int64]$m.synthetic_bars -eq 0 -and ![string]::IsNullOrWhiteSpace([string]$m.cache_tree_sha256))
+          "allow_save=$($allow.ToString().ToLowerInvariant())" | Out-File $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "valid_hours=$valid" | Out-File $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "expected_hours=$expected" | Out-File $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "coverage_ratio=$($m.coverage_ratio)" | Out-File $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "cache_digest=$($m.cache_tree_sha256)" | Out-File $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          if (!$allow) { throw "Cache rejected: valid=$valid baseline=$baseline corrupt=$($m.corrupt_hour_count) synthetic=$($m.synthetic_bars)" }
+          if ($manifestExit -ne 0 -or ![bool]$m.coverage_pass) {
+            throw "BLOCKING_DATA_DIAGNOSIS: real Dukascopy coverage $($m.coverage_ratio) remains below 0.90 after bounded same-run retries; valid=$valid expected=$expected missing=$($m.missing_hour_count)"
+          }
 
-      - name: Save new cumulative Dukascopy cache generation
+      - name: Save validated cumulative cache generation
         if: always() && steps.cache-guard.outputs.allow_save == 'true'
         uses: actions/cache/save@v4
         with:
           path: .cache/dukascopy
-          key: dukascopy-xau-v51-g2-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: dukascopy-xau-v52-${{ matrix.chunk }}-${{ matrix.from_date }}-${{ matrix.to_date }}-valid-${{ steps.cache-guard.outputs.valid_hours }}-${{ github.run_id }}
 
       - name: Verify source immutability
         if: always()
@@ -299,7 +287,7 @@ jobs:
           "V50_SUMMARY=$summary" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           $summary | Set-Content reports/V50_COMPACT_SUMMARY.txt -Encoding UTF8
 
-      - name: Upload artifact
+      - name: Upload evidence artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
