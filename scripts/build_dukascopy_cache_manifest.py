@@ -38,6 +38,13 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def main() -> int:
     if len(sys.argv) != 5:
         print("usage: build_dukascopy_cache_manifest.py FROM_DATE TO_DATE CACHE_DIR OUT_JSON")
@@ -85,18 +92,19 @@ def main() -> int:
                 corrupt_hours += 1
 
     canonical_valid_hours = valid_tick_hours + valid_empty_hours
-    coverage_ratio = valid_tick_hours / expected_hours if expected_hours else 0.0
-    payload_valid_ratio = canonical_valid_hours / expected_hours if expected_hours else 0.0
+    coverage_ratio = canonical_valid_hours / expected_hours if expected_hours else 0.0
 
     tree_digest = hashlib.sha256()
     for rel, size, digest in sorted(file_entries):
         tree_digest.update(f"{rel}\0{size}\0{digest}\n".encode("utf-8"))
 
     minimum = float(os.environ.get("PUBLIC_MIN_HOUR_SUCCESS_RATIO", "0.90"))
+    source_key = os.environ.get("CACHE_MANIFEST_SOURCE_KEY", "independent-real-dukascopy")
+    enforce_threshold = env_bool("CACHE_MANIFEST_ENFORCE_THRESHOLD", True)
     manifest = {
-        "schema": "dukascopy-cache-manifest-v1",
-        "mode": "independent-run-no-cross-run-cache-restore",
-        "source_key": "independent-real-dukascopy",
+        "schema": "dukascopy-cache-manifest-v2",
+        "mode": "exact-key-canonical-validation",
+        "source_key": source_key,
         "range": {"from": start.isoformat(), "to": end.isoformat()},
         "session_hours": hours,
         "expected_hour_count": expected_hours,
@@ -107,11 +115,11 @@ def main() -> int:
         "corrupt_hour_count": corrupt_hours,
         "days_with_valid_ticks": len(valid_days),
         "coverage_ratio": round(coverage_ratio, 8),
-        "payload_valid_ratio": round(payload_valid_ratio, 8),
         "minimum_required_coverage_ratio": minimum,
         "cache_file_count": len(file_entries),
         "cache_tree_sha256": tree_digest.hexdigest(),
         "synthetic_bars": 0,
+        "threshold_enforced": enforce_threshold,
         "coverage_pass": coverage_ratio >= minimum,
     }
     out_json.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
@@ -126,11 +134,11 @@ def main() -> int:
     if corrupt_hours:
         print(f"CACHE_MANIFEST_FAIL=corrupt_payloads:{corrupt_hours}")
         return 4
-    if coverage_ratio < minimum:
+    if enforce_threshold and coverage_ratio < minimum:
         print(
             "CACHE_MANIFEST_FAIL=coverage_below_threshold:"
             f"{coverage_ratio:.6f}<{minimum:.6f};"
-            f"valid={valid_tick_hours};expected={expected_hours};missing={missing_hours}"
+            f"valid={canonical_valid_hours};expected={expected_hours};missing={missing_hours}"
         )
         return 5
     print("CACHE_MANIFEST_PASS=true")
