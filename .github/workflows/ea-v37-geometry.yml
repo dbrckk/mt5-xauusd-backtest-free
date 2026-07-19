@@ -154,26 +154,58 @@ jobs:
         shell: pwsh
         run: |
           if (Test-Path .cache/dukascopy) { Remove-Item .cache/dukascopy -Recurse -Force }
-          New-Item -ItemType Directory -Force -Path .cache/dukascopy,reports | Out-Null
+          $restoreRoot = Join-Path $env:RUNNER_TEMP "v51-shards"
+          if (Test-Path $restoreRoot) { Remove-Item $restoreRoot -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path .cache/dukascopy,reports,$restoreRoot | Out-Null
 
-      - name: Restore exact same-run BI5 shards
+      - name: Download exact same-run BI5 shards to isolated root
         uses: actions/download-artifact@v4
         with:
           pattern: V51-BI5-${{ matrix.chunk }}-S*-${{ github.run_id }}
-          path: .cache/dukascopy
+          path: ${{ runner.temp }}/v51-shards
           merge-multiple: true
 
-      - name: Validate shard set presence
+      - name: Normalize and validate exact same-run shard layout
         shell: pwsh
         run: |
-          $inventories = @(Get-ChildItem .cache/dukascopy -Recurse -File -Filter "SHARD_*_INVENTORY.txt")
+          $restoreRoot = Join-Path $env:RUNNER_TEMP "v51-shards"
+          $sourceRoot = Join-Path $restoreRoot ".cache/dukascopy"
+          if (!(Test-Path $sourceRoot)) {
+            throw "BLOCKING_DIAGNOSIS=restored_shard_canonical_root_missing:$sourceRoot"
+          }
+          $inventories = @(Get-ChildItem $restoreRoot -Recurse -File -Filter "SHARD_*_INVENTORY.txt")
           if ($inventories.Count -ne 4) {
             throw "BLOCKING_DIAGNOSIS=incomplete_same_run_shard_set:$($inventories.Count)/4"
           }
-          $bi5 = @(Get-ChildItem .cache/dukascopy -Recurse -File -Filter *.bi5)
-          if ($bi5.Count -eq 0) { throw "BLOCKING_DIAGNOSIS=merged_cache_empty" }
+          $sourceFiles = @(Get-ChildItem $sourceRoot -Recurse -File -Filter *.bi5)
+          if ($sourceFiles.Count -eq 0) { throw "BLOCKING_DIAGNOSIS=merged_cache_empty" }
+          $copied = 0
+          $duplicates = 0
+          foreach ($file in $sourceFiles) {
+            $relative = [System.IO.Path]::GetRelativePath($sourceRoot, $file.FullName)
+            if ($relative.StartsWith("..")) { throw "BLOCKING_DIAGNOSIS=invalid_restored_relative_path:$relative" }
+            $target = Join-Path ".cache/dukascopy" $relative
+            $targetDir = Split-Path $target -Parent
+            New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+            if (Test-Path $target) {
+              $sourceDigest = (Get-FileHash -Algorithm SHA256 -Path $file.FullName).Hash
+              $targetDigest = (Get-FileHash -Algorithm SHA256 -Path $target).Hash
+              if ($sourceDigest -ne $targetDigest) {
+                throw "BLOCKING_DIAGNOSIS=conflicting_same_hour_payload:$relative"
+              }
+              $duplicates += 1
+            } else {
+              Copy-Item -LiteralPath $file.FullName -Destination $target
+              $copied += 1
+            }
+          }
+          $canonicalFiles = @(Get-ChildItem .cache/dukascopy -Recurse -File -Filter *.bi5)
+          if ($canonicalFiles.Count -eq 0) { throw "BLOCKING_DIAGNOSIS=canonical_cache_empty_after_normalization" }
           "SAME_RUN_SHARDS=4"
-          "MERGED_BI5_FILES=$($bi5.Count)"
+          "RESTORED_BI5_FILES=$($sourceFiles.Count)"
+          "CANONICAL_BI5_FILES=$($canonicalFiles.Count)"
+          "COPIED_BI5_FILES=$copied"
+          "IDENTICAL_DUPLICATES=$duplicates"
 
       - name: Apply canonical V51 transform
         shell: pwsh
@@ -211,7 +243,7 @@ jobs:
             "forced_trades=false", "active_route=STATE_SESSION_BREAKDOWN_SELL_08",
             "rejected_routes=STATE_PULLBACK_REJECTION_SELL_08|STATE_BREAK_RETEST_SELL_08",
             "rejected_cells_pruned=07|09|10|11|12|13|14",
-            "cache_restore_mode=exact_same_run_shards", "cache_source_key=$env:CACHE_MANIFEST_SOURCE_KEY"
+            "cache_restore_mode=exact_same_run_shards_normalized", "cache_source_key=$env:CACHE_MANIFEST_SOURCE_KEY"
           ) | Set-Content reports/V51_SOURCE_IDENTITY.txt -Encoding UTF8
 
       - name: Capture source digests
@@ -237,6 +269,7 @@ jobs:
           $digests | ConvertTo-Json | Set-Content (Join-Path $env:RUNNER_TEMP "v51-source-digests.json") -Encoding UTF8
 
       - name: Build merged preflight manifest
+        id: preflight
         continue-on-error: true
         shell: pwsh
         run: |
@@ -258,10 +291,18 @@ jobs:
           python scripts/build_dukascopy_cache_manifest.py `
             "${{ matrix.from_date }}" "${{ matrix.to_date }}" ".cache/dukascopy" "reports/V51_CACHE_MANIFEST.json"
 
-      - name: Verify source immutability
+      - name: Verify cache monotonicity and source immutability
         if: always()
         shell: pwsh
         run: |
+          if (!(Test-Path reports/V51_PREFLIGHT_CACHE_MANIFEST.json)) { throw "BLOCKING_DIAGNOSIS=preflight_manifest_missing" }
+          if (!(Test-Path reports/V51_CACHE_MANIFEST.json)) { throw "BLOCKING_DIAGNOSIS=final_manifest_missing" }
+          $preflight = Get-Content reports/V51_PREFLIGHT_CACHE_MANIFEST.json -Raw | ConvertFrom-Json
+          $final = Get-Content reports/V51_CACHE_MANIFEST.json -Raw | ConvertFrom-Json
+          if ([int]$final.canonical_valid_hour_count -lt [int]$preflight.canonical_valid_hour_count) {
+            throw "BLOCKING_DIAGNOSIS=cache_coverage_regression;preflight=$($preflight.canonical_valid_hour_count);final=$($final.canonical_valid_hour_count)"
+          }
+          if ([int]$final.corrupt_hour_count -gt 0) { throw "BLOCKING_DIAGNOSIS=corrupt_bi5_payloads:$($final.corrupt_hour_count)" }
           $expected = Get-Content (Join-Path $env:RUNNER_TEMP "v51-source-digests.json") -Raw | ConvertFrom-Json
           $mutated = @()
           foreach ($property in $expected.PSObject.Properties) {
@@ -270,6 +311,7 @@ jobs:
             if ((Get-FileHash -Algorithm SHA256 -Path $path).Hash -ne [string]$property.Value) { $mutated += $path }
           }
           if ($mutated.Count -gt 0) { throw "Source mutation: $($mutated -join ', ')" }
+          "CACHE_MONOTONICITY=PASS"
           "V51_SOURCE_IMMUTABILITY=PASS"
 
       - name: Analyze results
