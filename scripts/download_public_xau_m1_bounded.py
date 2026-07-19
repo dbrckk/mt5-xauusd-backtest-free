@@ -1,9 +1,10 @@
 """Deadline-enforced, shard-aware and cache-progressive public XAUUSD downloader.
 
-The canonical downloader remains responsible for BI5 parsing, dataset quality
-checks and deterministic diagnostics. This wrapper changes only scheduling and
-HTTP acquisition so a workflow can acquire disjoint deterministic shards,
-merge them in the same run, then retry only genuinely missing or corrupt hours.
+The canonical downloader remains responsible for BI5 parsing, bar construction and
+quality checks. This wrapper changes only deterministic scheduling and HTTP
+acquisition. It never fabricates data, validates every downloaded payload through
+the canonical parser, evicts corrupt cache entries, retries only unresolved hours,
+and terminates with explicit diagnostics when the real-data threshold cannot be met.
 """
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ import os
 import time
 import urllib.error
 import urllib.request
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -66,9 +68,18 @@ def evict_cached_hour(day, hour) -> bool:
     return False
 
 
+def atomic_save(day, hour, data: bytes) -> None:
+    cache_path = mod.cache_path_for(day, hour)
+    if cache_path is None:
+        return
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = cache_path.with_suffix(cache_path.suffix + ".tmp")
+    tmp.write_bytes(data)
+    tmp.replace(cache_path)
+
+
 def fetch_hour_once(day, hour, deadline: float):
     url = mod.hour_url(day, hour)
-    cache_path = mod.cache_path_for(day, hour)
     if cache_has_payload(day, hour):
         return read_cached_hour(day, hour)
 
@@ -78,27 +89,22 @@ def fetch_hour_once(day, hour, deadline: float):
 
     timeout = max(1.0, min(float(mod.FETCH_TIMEOUT_SECONDS), remaining))
     try:
-        req = urllib.request.Request(
+        request = urllib.request.Request(
             url,
             headers={
-                "User-Agent": "Mozilla/5.0 GitHubActions-XAU-Public-Backtest/7.0",
-                "Accept": "*/*",
+                "User-Agent": "Mozilla/5.0 GitHubActions-XAU-Public-Backtest/8.0",
+                "Accept": "application/octet-stream,*/*;q=0.8",
+                "Accept-Encoding": "identity",
+                "Cache-Control": "no-cache",
                 "Connection": "close",
             },
         )
-        with urllib.request.urlopen(req, timeout=timeout) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             data = response.read()
         if not data:
             return day, hour, None, "empty_response", url
-        if cache_path is not None:
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = cache_path.with_suffix(cache_path.suffix + ".tmp")
-            tmp.write_bytes(data)
-            tmp.replace(cache_path)
         return day, hour, data, "downloaded", url
     except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            return day, hour, None, "missing_404", url
         return day, hour, None, f"http_error:{exc.code}", url
     except urllib.error.URLError as exc:
         return day, hour, None, f"url_error:{exc.reason}", url
@@ -112,8 +118,9 @@ def rotated(slots, round_no: int):
     items = list(slots)
     if not items:
         return items
-    run_attempt = int_env("GITHUB_RUN_ATTEMPT", 1, 1, 100000)
-    offset = ((run_attempt - 1) * 977 + (round_no - 1) * 503) % len(items)
+    run_id = int_env("GITHUB_RUN_ID", 1, 1, 2_147_483_647)
+    run_attempt = int_env("GITHUB_RUN_ATTEMPT", 1, 1, 100_000)
+    offset = (run_id * 37 + run_attempt * 977 + (round_no - 1) * 503) % len(items)
     return items[offset:] + items[:offset]
 
 
@@ -129,20 +136,43 @@ def shard_slots(slots):
     return selected
 
 
-def record_payload(day, hour, raw, fetch_status, url, bars, days_with_ticks):
-    mod.fetch_attempt_status_counts[fetch_status.split(":", 1)[0]] += 1
-    if raw is not None:
-        payload_status, ticks = mod.process_hour(day, hour, raw, bars)
-        if payload_status == "ok":
-            days_with_ticks.add(day)
-            return ticks, 1, 0, False, 0
-        if payload_status == "empty_market":
-            return 0, 0, 1, False, 0
-        return 0, 0, 0, True, 0
-    if fetch_status == "missing_404":
+def retryable_status(status: str, attempt_count: int) -> bool:
+    base = status.split(":", 1)[0]
+    if base in {"deadline_exceeded", "cache_disabled"}:
+        return False
+    if base == "http_error" and status.endswith(":404"):
+        return attempt_count < int_env("PUBLIC_404_RETRY_LIMIT", 4, 1, 12)
+    return base in {
+        "http_error",
+        "url_error",
+        "timeout",
+        "empty_response",
+        "failed",
+        "cache_read_failed",
+        "cache_empty",
+    }
+
+
+def register_terminal_failure(day, hour, status: str, url: str) -> int:
+    mod.fetch_attempt_status_counts[status.split(":", 1)[0]] += 1
+    if status == "http_error:404":
         mod.missing_downloads.append(url)
-        return 0, 0, 0, False, 1
-    return 0, 0, 0, True, 0
+        return 1
+    mod.failed_downloads.append(f"{url} | {status}")
+    return 0
+
+
+def process_payload(day, hour, raw: bytes, bars, days_with_ticks):
+    payload_status, ticks = mod.process_hour(day, hour, raw, bars)
+    if payload_status == "ok":
+        atomic_save(day, hour, raw)
+        days_with_ticks.add(day)
+        return ticks, 1, 0, False
+    if payload_status == "empty_market":
+        atomic_save(day, hour, raw)
+        return 0, 0, 1, False
+    evict_cached_hour(day, hour)
+    return 0, 0, 0, True
 
 
 def fetch_and_process_slots_bounded(slots, deadline_epoch: float, bars):
@@ -161,63 +191,90 @@ def fetch_and_process_slots_bounded(slots, deadline_epoch: float, bars):
     print(f"PUBLIC_HISTORY_CACHE_SLOTS_INITIAL={len(cached_slots)}")
     print(f"PUBLIC_HISTORY_MISSING_SLOTS_INITIAL={len(missing_slots)}")
 
-    corrupt_or_unreadable = []
+    pending = list(missing_slots)
     evicted_corrupt = 0
     for day, hour in cached_slots:
-        d, h, raw, status, url = read_cached_hour(day, hour)
-        ticks, ok, empty, retry, missing = record_payload(d, h, raw, status, url, bars, days_with_ticks)
+        d, h, raw, status, _ = read_cached_hour(day, hour)
+        if raw is None:
+            pending.append((day, hour))
+            continue
+        ticks, ok, empty, corrupt = process_payload(d, h, raw, bars, days_with_ticks)
         total_ticks += ticks
         successful_hours += ok
         empty_market_hours += empty
-        missing_404 += missing
-        if retry:
-            if evict_cached_hour(day, hour):
-                evicted_corrupt += 1
-            corrupt_or_unreadable.append((day, hour))
+        if corrupt:
+            evicted_corrupt += 1
+            pending.append((day, hour))
 
     print(f"PUBLIC_HISTORY_CACHE_CORRUPT_EVICTED={evicted_corrupt}")
-    pending = corrupt_or_unreadable + missing_slots
     downloaded_this_run = 0
+    attempts = Counter()
+    last_status = {}
+    max_rounds = max(
+        int(getattr(mod, "FETCH_RETRY_ROUNDS", 1)),
+        int_env("PUBLIC_FETCH_MAX_ADAPTIVE_ROUNDS", 48, 1, 96),
+    )
+    workers = max(int(getattr(mod, "FETCH_WORKERS", 1)), int_env("PUBLIC_ADAPTIVE_WORKERS", 12, 1, 24))
 
-    for round_no in range(1, mod.FETCH_RETRY_ROUNDS + 1):
-        if not pending or time.monotonic() >= deadline:
-            break
+    round_no = 0
+    while pending and time.monotonic() < deadline and round_no < max_rounds:
+        round_no += 1
         work = rotated(pending, round_no)
         retry = []
-        print(f"FETCH_ROUND={round_no} pending={len(work)} workers={mod.FETCH_WORKERS} one_attempt_per_slot=true")
-        with ThreadPoolExecutor(max_workers=mod.FETCH_WORKERS) as pool:
+        status_counts = Counter()
+        print(f"FETCH_ROUND={round_no} pending={len(work)} workers={workers} missing_only=true")
+        with ThreadPoolExecutor(max_workers=workers) as pool:
             future_map = {pool.submit(fetch_hour_once, day, hour, deadline): (day, hour) for day, hour in work}
             for future in as_completed(future_map):
                 day, hour = future_map[future]
+                attempts[(day, hour)] += 1
                 try:
                     d, h, raw, status, url = future.result()
                 except Exception as exc:
                     d, h = day, hour
                     raw, status, url = None, f"failed:{type(exc).__name__}:{exc}", mod.hour_url(day, hour)
-                ticks, ok, empty, should_retry, missing = record_payload(d, h, raw, status, url, bars, days_with_ticks)
-                total_ticks += ticks
-                successful_hours += ok
-                empty_market_hours += empty
-                missing_404 += missing
-                if status == "downloaded" and ok:
-                    downloaded_this_run += 1
-                if should_retry:
-                    if raw is not None:
-                        evict_cached_hour(d, h)
+                status_counts[status.split(":", 1)[0]] += 1
+                last_status[(d, h)] = (status, url)
+                if raw is not None:
+                    ticks, ok, empty, corrupt = process_payload(d, h, raw, bars, days_with_ticks)
+                    total_ticks += ticks
+                    successful_hours += ok
+                    empty_market_hours += empty
+                    if ok or empty:
+                        mod.fetch_attempt_status_counts[status.split(":", 1)[0]] += 1
+                        if status == "downloaded" and ok:
+                            downloaded_this_run += 1
+                        continue
+                    status = "corrupt_payload"
+                    last_status[(d, h)] = (status, url)
+                if retryable_status(status, attempts[(d, h)]) and time.monotonic() < deadline:
                     retry.append((d, h))
+                else:
+                    missing_404 += register_terminal_failure(d, h, status, url)
         pending = retry
+        print("FETCH_ROUND_STATUS=" + ",".join(f"{key}:{value}" for key, value in sorted(status_counts.items())))
         if pending and time.monotonic() < deadline:
-            time.sleep(min(20.0, 2.0 * round_no))
+            sleep_seconds = min(30.0, 1.5 * round_no)
+            time.sleep(min(sleep_seconds, max(0.0, deadline - time.monotonic())))
 
     deadline_hit = bool(pending) and time.monotonic() >= deadline
-    reason = "deadline_exceeded" if deadline_hit else "retry_rounds_exhausted"
+    round_limit_hit = bool(pending) and round_no >= max_rounds and not deadline_hit
+    terminal_reason = "deadline_exceeded" if deadline_hit else "adaptive_retry_round_limit_exhausted"
     for day, hour in pending:
-        mod.failed_downloads.append(f"{mod.hour_url(day, hour)} | {reason}")
+        status, url = last_status.get((day, hour), (terminal_reason, mod.hour_url(day, hour)))
+        mod.failed_downloads.append(f"{url} | {terminal_reason};last_status={status};attempts={attempts[(day, hour)]}")
 
     print(f"PUBLIC_HISTORY_DOWNLOADED_THIS_RUN={downloaded_this_run}")
     print(f"PUBLIC_HISTORY_CACHE_SLOTS_FINAL={successful_hours + empty_market_hours}")
+    print(f"PUBLIC_HISTORY_ADAPTIVE_ROUNDS={round_no}")
     print(f"PUBLIC_HISTORY_DEADLINE_HIT={str(deadline_hit).lower()}")
+    print(f"PUBLIC_HISTORY_ROUND_LIMIT_HIT={str(round_limit_hit).lower()}")
     print(f"PUBLIC_HISTORY_UNFINISHED_SLOTS={len(pending)}")
+    if pending:
+        print(
+            "BLOCKING_DIAGNOSIS=real_dukascopy_hours_unresolved_after_bounded_missing_only_retry;"
+            f"remaining={len(pending)};rounds={round_no};deadline_hit={str(deadline_hit).lower()}"
+        )
     return total_ticks, successful_hours, len(pending), empty_market_hours, missing_404, days_with_ticks
 
 
