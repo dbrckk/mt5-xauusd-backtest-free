@@ -19,6 +19,14 @@ function Set-V44ProfileValue([string]$Text, [string]$Name, [string]$OldValue, [s
   return $Text
 }
 
+function Stop-ValidationProcessTree([int]$ProcessId) {
+  if ($ProcessId -gt 0) {
+    & taskkill.exe /PID $ProcessId /T /F 2>$null | Out-Null
+  }
+  Get-Process -Name "terminal64","terminal","metaeditor64","metaeditor","metatester64","metatester","python","python3" -ErrorAction SilentlyContinue |
+    Stop-Process -Force -ErrorAction SilentlyContinue
+}
+
 $repo = (Resolve-Path ".").Path
 $reports = Join-Path $repo "reports"
 New-Item -ItemType Directory -Force -Path $reports | Out-Null
@@ -112,7 +120,55 @@ $patched = Join-Path $env:RUNNER_TEMP "run-ea-v44-public-backtest.locked.ps1"
 Set-Content -Path $patched -Value $text -Encoding UTF8
 Copy-Item $patched (Join-Path $reports "V44_WRAPPER_SOURCE.ps1") -Force
 
-& pwsh -NoProfile -ExecutionPolicy Bypass -File $patched
-$code = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+$stdoutPath = Join-Path $reports "V51_VALIDATION_STDOUT.log"
+$stderrPath = Join-Path $reports "V51_VALIDATION_STDERR.log"
+$watchdogPath = Join-Path $reports "V51_VALIDATION_WATCHDOG.txt"
+$outerTimeoutMinutes = 240
+if ($env:V51_OUTER_VALIDATION_TIMEOUT_MINUTES) {
+  [int]::TryParse($env:V51_OUTER_VALIDATION_TIMEOUT_MINUTES, [ref]$outerTimeoutMinutes) | Out-Null
+}
+$outerTimeoutMinutes = [Math]::Max(60, [Math]::Min(300, $outerTimeoutMinutes))
+
+$startedUtc = (Get-Date).ToUniversalTime()
+@(
+  "status=started",
+  "started_utc=$($startedUtc.ToString('o'))",
+  "timeout_minutes=$outerTimeoutMinutes",
+  "runner=$patched"
+) | Set-Content $watchdogPath -Encoding UTF8
+
+$process = Start-Process -FilePath "pwsh" `
+  -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',$patched) `
+  -WorkingDirectory $repo `
+  -RedirectStandardOutput $stdoutPath `
+  -RedirectStandardError $stderrPath `
+  -PassThru
+
+if (-not $process.WaitForExit($outerTimeoutMinutes * 60 * 1000)) {
+  Stop-ValidationProcessTree $process.Id
+  @(
+    "status=timeout",
+    "started_utc=$($startedUtc.ToString('o'))",
+    "ended_utc=$((Get-Date).ToUniversalTime().ToString('o'))",
+    "timeout_minutes=$outerTimeoutMinutes",
+    "process_id=$($process.Id)",
+    "blocking_diagnosis=validation_runner_exceeded_outer_timeout"
+  ) | Set-Content $watchdogPath -Encoding UTF8
+  throw "BLOCKING_DIAGNOSIS=validation_runner_exceeded_outer_timeout:$outerTimeoutMinutes minutes"
+}
+
+$process.Refresh()
+$code = [int]$process.ExitCode
+@(
+  "status=completed",
+  "started_utc=$($startedUtc.ToString('o'))",
+  "ended_utc=$((Get-Date).ToUniversalTime().ToString('o'))",
+  "timeout_minutes=$outerTimeoutMinutes",
+  "process_id=$($process.Id)",
+  "exit_code=$code"
+) | Set-Content $watchdogPath -Encoding UTF8
+
+if (Test-Path $stdoutPath) { Get-Content $stdoutPath | Write-Host }
+if (Test-Path $stderrPath) { Get-Content $stderrPath | Write-Error -ErrorAction Continue }
 if ($code -ne 0) { throw "V44 runner exited with code $code" }
 exit 0
