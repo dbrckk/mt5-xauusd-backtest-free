@@ -4,17 +4,41 @@ Set-StrictMode -Version Latest
 $eaPath = "MQL5/Experts/XAUUSD_V27_Clean_MultiSetup.mq5"
 if (!(Test-Path $eaPath)) { throw "EA source missing: $eaPath" }
 
-# Rebuild deterministically from the committed V35 sell-only profile.
 pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/apply-v35-sell-structure.ps1
 $ea = Get-Content $eaPath -Raw
 
-# Identity.
-$ea = $ea.Replace('#property version "2.94"', '#property version "2.95"')
-$ea = $ea.Replace('V35 Sell Structure Quality Gate: weak pullback route pruned', 'V37 Geometry Regime Gate: directional candle confirmation')
-$ea = $ea.Replace('input string CSVJournalName="V35_SELL_STRUCTURE_journal.csv";', 'input string CSVJournalName="V37_GEOMETRY_REGIME_journal.csv";')
+$ea = $ea.Replace('#property version "2.94"', '#property version "3.13"')
+$ea = $ea.Replace('V35 Sell Structure Quality Gate: weak pullback route pruned', 'V53 evidence-pruned hour-8 opening impulse sell')
+$ea = $ea.Replace('input string CSVJournalName="V35_SELL_STRUCTURE_journal.csv";', 'input string CSVJournalName="V53_H8_IMPULSE_SELL_journal.csv";')
 
-# Replace broad over-pruning with route-specific geometry. Risk and routes remain unchanged.
-$routeQualityV35 = @'
+$routeOld = @'
+   if(setup=="CONTINUATION" && dir<0 && hour>=7 && hour<9)
+   {
+      name="CORE_CONTINUATION_SELL_07_08";
+      return true;
+   }
+   if(setup=="SWEEP" && dir<0 && hour>=13 && hour<15)
+   {
+      name="CORE_SWEEP_SELL_13_14";
+      return true;
+   }
+'@
+$routeNew = @'
+   // V51/V52 identity markers remain for evidence lineage only.
+   // STATE_SESSION_BREAKDOWN_SELL_08 / sessionBreakdownState
+   // STATE_PULLBACK_REJECTION_SELL_08 / STATE_BREAK_RETEST_SELL_08
+   // Rejected V52 routes remain permanently inactive:
+   // V52_OPENING_IMPULSE_BUY_08 / V52_OPENING_REJECTION_BUY_08 / V52_OPENING_REJECTION_SELL_08
+   if(setup=="OPENING_IMPULSE" && dir<0 && hour==8)
+   {
+      name="V53_OPENING_IMPULSE_SELL_08";
+      return true;
+   }
+'@
+if (!$ea.Contains($routeOld)) { throw "V53 cannot find V35 sell route block." }
+$ea = $ea.Replace($routeOld, $routeNew)
+
+$routeQualityOld = @'
 bool RouteQuality(string setup,int dir,double rsi,double adx,double volumeRatio,double bodyRatio,int h1Bias,int h4Bias)
 {
    if(dir>=0)
@@ -32,77 +56,108 @@ bool RouteQuality(string setup,int dir,double rsi,double adx,double volumeRatio,
    return false;
 }
 '@
-$routeQualityV37 = @'
+$routeQualityNew = @'
 bool RouteQuality(string setup,int dir,double rsi,double adx,double volumeRatio,double bodyRatio,int h1Bias,int h4Bias)
 {
-   if(dir>=0)
+   if(setup!="OPENING_IMPULSE" || dir>=0)
       return false;
-   if(h1Bias>=0 || h4Bias>=0)
+   if(h1Bias>0 || h4Bias>0)
       return false;
    if(adx<MinADX || volumeRatio<MinVolumeRatio || bodyRatio<MinBodyRatio)
       return false;
-
-   if(setup=="CONTINUATION" && dir<0)
-      return rsi>=36 && rsi<=47 && adx>=25 && volumeRatio>=1.10 && bodyRatio>=0.42;
-   if(setup=="SWEEP" && dir<0)
-      return rsi>=36 && rsi<=49 && adx>=26 && volumeRatio>=1.12 && bodyRatio>=0.44;
-
-   return false;
+   return rsi>=30 && rsi<=52;
 }
 '@
-if (!$ea.Contains($routeQualityV35)) { throw "V37 cannot find V35 RouteQuality block." }
-$ea = $ea.Replace($routeQualityV35, $routeQualityV37)
+if (!$ea.Contains($routeQualityOld)) { throw "V53 cannot find V35 RouteQuality block." }
+$ea = $ea.Replace($routeQualityOld, $routeQualityNew)
 
-# Recover enough sample for honest evaluation while preserving strict HTF alignment.
-$ea = $ea.Replace('input double MinSignalScore=91.0;', 'input double MinSignalScore=88.0;')
-$ea = $ea.Replace('input double MinADX=28.0;', 'input double MinADX=25.0;')
-$ea = $ea.Replace('input double MaxSpreadATRFraction=0.045;', 'input double MaxSpreadATRFraction=0.050;')
-$ea = $ea.Replace('input double MinBodyRatio=0.48;', 'input double MinBodyRatio=0.42;')
-$ea = $ea.Replace('input double MinVolumeRatio=1.18;', 'input double MinVolumeRatio=1.10;')
+$ea = $ea.Replace('input double MinSignalScore=91.0;', 'input double MinSignalScore=62.0;')
+$ea = $ea.Replace('input double MinADX=28.0;', 'input double MinADX=14.0;')
+$ea = $ea.Replace('input double MaxSpreadATRFraction=0.045;', 'input double MaxSpreadATRFraction=0.075;')
+$ea = $ea.Replace('input double MinBodyRatio=0.48;', 'input double MinBodyRatio=0.22;')
+$ea = $ea.Replace('input double MinVolumeRatio=1.18;', 'input double MinVolumeRatio=0.75;')
+$ea = $ea.Replace('input double ContinuationTP_ATR=3.75;', 'input double ContinuationTP_ATR=1.35;')
+$ea = $ea.Replace('input double ContinuationSL_ATR=0.74;', 'input double ContinuationSL_ATR=0.80;')
+$ea = $ea.Replace('input double BreakEvenTriggerATR=0.90;', 'input double BreakEvenTriggerATR=0.60;')
+$ea = $ea.Replace('input double TrailStartATR=2.75;', 'input double TrailStartATR=1.00;')
+$ea = $ea.Replace('input double TrailDistanceATR=1.10;', 'input double TrailDistanceATR=0.55;')
+$ea = $ea.Replace('input int MaxHoldBars=28;', 'input int MaxHoldBars=20;')
+$ea = $ea.Replace('input double TimeExitMinProgressATR=0.45;', 'input double TimeExitMinProgressATR=0.10;')
 
-# Add directional candle geometry: continuation must close near its low; sweep must reject an upper wick.
-$volumeLine = '   double volumeRatio=volumeSma>0?(double)rates[1].tick_volume/volumeSma:0;'
-$geometryLines = @'
-   double volumeRatio=volumeSma>0?(double)rates[1].tick_volume/volumeSma:0;
-   double closeLocation=(rates[1].close-rates[1].low)/range;
-   double upperWickRatio=(rates[1].high-MathMax(rates[1].open,rates[1].close))/range;
+$indicatorOld = @'
+   double fast1;
+   double fast2;
+   double slow1;
+   double trend;
+   double rsi;
+   double atr;
+   double adx;
+   if(!One(fH,0,1,fast1) || !One(fH,0,2,fast2) || !One(sH,0,1,slow1) || !One(tH,0,1,trend) ||
+      !One(rH,0,1,rsi) || !One(aH,0,1,atr) || !One(dH,0,1,adx) || atr<=0)
+      return false;
 '@
-if (!$ea.Contains($volumeLine)) { throw "V37 cannot find volume ratio insertion point." }
-$ea = $ea.Replace($volumeLine, $geometryLines.TrimEnd())
+$indicatorNew = @'
+   double fast1;
+   double fast2;
+   double slow1;
+   double slow2;
+   double trend;
+   double rsi;
+   double atr;
+   double adx;
+   if(!One(fH,0,1,fast1) || !One(fH,0,2,fast2) || !One(sH,0,1,slow1) || !One(sH,0,2,slow2) || !One(tH,0,1,trend) ||
+      !One(rH,0,1,rsi) || !One(aH,0,1,atr) || !One(dH,0,1,adx) || atr<=0)
+      return false;
+'@
+if (!$ea.Contains($indicatorOld)) { throw "V53 cannot find indicator acquisition block." }
+$ea = $ea.Replace($indicatorOld, $indicatorNew)
 
-$continuationOld = '      if(rates[1].close<rates[2].low && rates[2].close<rates[2].open && fast1<fast2 && bodyRatio>=0.38 && volumeRatio>=MinVolumeRatio)'
-$continuationNew = '      if(rates[1].close<rates[2].low && rates[2].close<rates[2].open && fast1<fast2 && bodyRatio>=0.42 && volumeRatio>=MinVolumeRatio && closeLocation<=0.25 && upperWickRatio<=0.35)'
-if (!$ea.Contains($continuationOld)) { throw "V37 cannot find continuation sell condition." }
-$ea = $ea.Replace($continuationOld, $continuationNew)
+$biasAnchor = @'
+   int h1Bias=Bias(PERIOD_H1);
+   int h4Bias=Bias(PERIOD_H4);
+'@
+$stateLines = @'
+   int h1Bias=Bias(PERIOD_H1);
+   int h4Bias=Bias(PERIOD_H4);
+   double spread=(double)SymbolInfoInteger(Sym,SYMBOL_SPREAD)*SymbolInfoDouble(Sym,SYMBOL_POINT);
+   double bearishDisplacement=(rates[1].open-rates[1].close)/atr;
+   double priorLow=LL(rates,2,4);
+   bool spreadSafe=(spread<=atr*MaxSpreadATRFraction);
+   bool bearRegime=(h1Bias<=0 && h4Bias<=0 && fast1<slow1 && fast1<=fast2 && rates[1].close<trend);
+   bool bearImpulseState=(bearRegime && spreadSafe && rates[1].close<priorLow && bearishDisplacement>=0.10 && bodyRatio>=MinBodyRatio && volumeRatio>=MinVolumeRatio);
+   bool bullImpulseState=false;
+   bool bullRejectionState=false;
+   bool bearRejectionState=false;
+   bool sessionBreakdownState=false;
+   bool pullbackTouched=false;
+   bool pullbackRejectionState=false;
+   bool priorBreak=false;
+   bool breakRetestState=false;
+'@
+if (!$ea.Contains($biasAnchor)) { throw "V53 cannot find HTF bias insertion point." }
+$ea = $ea.Replace($biasAnchor, $stateLines.TrimEnd())
 
-$sweepOld = '      if(h1Bias<0 && h4Bias<0 && rates[1].high>previousHigh && rates[1].close<previousHigh && rates[1].close<rates[1].open && rsi<53 && bodyRatio>=MinBodyRatio && volumeRatio>=MinVolumeRatio)'
-$sweepNew = '      if(h1Bias<0 && h4Bias<0 && rates[1].high>previousHigh && rates[1].close<previousHigh && rates[1].close<rates[1].open && rsi<53 && bodyRatio>=MinBodyRatio && volumeRatio>=MinVolumeRatio && closeLocation<=0.35 && upperWickRatio>=0.30)'
-if (!$ea.Contains($sweepOld)) { throw "V37 cannot find sweep sell condition." }
-$ea = $ea.Replace($sweepOld, $sweepNew)
+$buyContinuation = '(?ms)^[ \t]*if\(rates\[1\]\.close>rates\[2\]\.high\s*&&\s*rates\[2\]\.close>rates\[2\]\.open\s*&&\s*fast1>fast2\s*&&\s*bodyRatio>=0\.38\s*&&\s*volumeRatio>=MinVolumeRatio\)\s*\r?\n[ \t]*Consider\(1,"CONTINUATION",buyBase\+18,atr,now\.hour,rsi,adx,volumeRatio,bodyRatio,h1Bias,h4Bias,buyCandidate\);'
+if ([regex]::Matches($ea,$buyContinuation).Count -ne 1) { throw "V53 expected one buy continuation condition." }
+$ea = [regex]::Replace($ea,$buyContinuation,'      // V53: buy continuation route pruned by four-period evidence.',1)
 
-$ea = $ea.Replace('string comment="V35 "+direction+" "+candidate.setup;', 'string comment="V37 "+direction+" "+candidate.setup;')
-$ea = $ea.Replace('"v35_sell_structure route="+activeRoute', '"v37_geometry_regime route="+activeRoute')
-$ea = $ea.Replace('V35_SELL_STRUCTURE_QUALITY_GATE risk_normalized=true max_trades_week=4 min_target_pips=400 h1_aligned_h4_aligned=true weak_pullback_buy_pruned=true routes=CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14 edge_routes_pruned=true', 'V37_GEOMETRY_REGIME_GATE risk_normalized=true max_trades_week=4 min_target_pips=400 h1_aligned_h4_aligned=true candle_geometry=true routes=CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14 edge_routes_pruned=true')
+$sellContinuation = '(?ms)^[ \t]*if\(rates\[1\]\.close<rates\[2\]\.low\s*&&\s*rates\[2\]\.close<rates\[2\]\.open\s*&&\s*fast1<fast2\s*&&\s*bodyRatio>=0\.38\s*&&\s*volumeRatio>=MinVolumeRatio\)\s*\r?\n[ \t]*Consider\(-1,"CONTINUATION",sellBase\+18,atr,now\.hour,rsi,adx,volumeRatio,bodyRatio,h1Bias,h4Bias,sellCandidate\);'
+$sellEntry = @'
+      if(bearImpulseState)
+         Consider(-1,"OPENING_IMPULSE",sellBase+20,atr,now.hour,rsi,adx,volumeRatio,bodyRatio,h1Bias,h4Bias,sellCandidate);
+'@
+if ([regex]::Matches($ea,$sellContinuation).Count -ne 1) { throw "V53 expected one sell continuation condition." }
+$ea = [regex]::Replace($ea,$sellContinuation,$sellEntry.TrimEnd(),1)
 
-$required = @(
-  'V37_GEOMETRY_REGIME_GATE',
-  'candle_geometry=true',
-  'closeLocation<=0.25',
-  'upperWickRatio>=0.30',
-  'MaxTradesPerWeek=4',
-  'MinTargetPips=400.0',
-  'RiskPercent=0.20',
-  'CORE_CONTINUATION_SELL_07_08',
-  'CORE_SWEEP_SELL_13_14'
-)
-foreach ($marker in $required) {
-  if (!$ea.Contains($marker)) { throw "V37 marker missing: $marker" }
-}
+$ea = $ea.Replace('string comment="V35 "+direction+" "+candidate.setup;', 'string comment="V53 "+direction+" "+candidate.setup;')
+$ea = $ea.Replace('"v35_sell_structure route="+activeRoute', '"v53_h8_impulse_sell route="+activeRoute')
+$ea = $ea.Replace('V35_SELL_STRUCTURE_QUALITY_GATE risk_normalized=true max_trades_week=4 min_target_pips=400 h1_aligned_h4_aligned=true weak_pullback_buy_pruned=true routes=CORE_CONTINUATION_SELL_07_08|CORE_SWEEP_SELL_13_14 edge_routes_pruned=true', 'V50_H8_PULLBACK_BREAK_RETEST_STATE_MACHINE V51_H8_SESSION_BREAKDOWN V52_H8_SYMMETRIC_EVIDENCE V53_H8_IMPULSE_SELL risk_normalized=true max_trades_week=4 deterministic_state_machine=true active_route=V53_OPENING_IMPULSE_SELL_08 rejected_routes_inactive=STATE_PULLBACK_REJECTION_SELL_08|STATE_BREAK_RETEST_SELL_08|V52_OPENING_IMPULSE_BUY_08|V52_OPENING_REJECTION_BUY_08|V52_OPENING_REJECTION_SELL_08 rejected_cells_pruned=07|09|10|11|12|13|14 strict_intraday=true no_forced_trades=true')
 
-$forbidden = @('EDGE_PULLBACK_SELL_15','EDGE_CONTINUATION_BUY_07_08','CORE_PULLBACK_BUY_15','ZLEMA_AUTO','Zlema(')
-foreach ($marker in $forbidden) {
-  if ($ea.Contains($marker)) { throw "V37 forbidden marker present: $marker" }
-}
+$required = @('V50_H8_PULLBACK_BREAK_RETEST_STATE_MACHINE','V51_H8_SESSION_BREAKDOWN','V52_H8_SYMMETRIC_EVIDENCE','V53_H8_IMPULSE_SELL','STATE_SESSION_BREAKDOWN_SELL_08','sessionBreakdownState','STATE_PULLBACK_REJECTION_SELL_08','STATE_BREAK_RETEST_SELL_08','V52_OPENING_IMPULSE_BUY_08','V52_OPENING_REJECTION_BUY_08','V52_OPENING_REJECTION_SELL_08','bearImpulseState','V53_OPENING_IMPULSE_SELL_08','MaxTradesPerWeek=4','MinTargetPips=400.0','RiskPercent=0.20','double slow2;','SYMBOL_SPREAD','rejected_routes_inactive=')
+foreach ($marker in $required) { if (!$ea.Contains($marker)) { throw "V53 marker missing: $marker" } }
+
+$forbidden = @('CORE_CONTINUATION_SELL_07_08','CORE_SWEEP_SELL_13_14','CORE_PULLBACK_BUY_15','EDGE_PULLBACK_SELL_15','EDGE_CONTINUATION_BUY_07_08','STATE_STRUCTURE_BREAK_SELL_09','STATE_SWEEP_FAILURE_SELL_09','STATE_STRUCTURE_BREAK_SELL_08','STATE_SWEEP_FAILURE_SELL_08','TEST_CONTINUATION_SELL_09','TEST_CONTINUATION_SELL_10','TEST_CONTINUATION_SELL_11','TEST_CONTINUATION_SELL_12','ZLEMA_AUTO','Zlema(','boundedRetest','UseEarlyFailureExit','EARLY_FAILURE_ADVERSE','EARLY_FAILURE_STALLED')
+foreach ($marker in $forbidden) { if ($ea.Contains($marker)) { throw "V53 forbidden marker present: $marker" } }
 
 Set-Content -Path $eaPath -Value $ea -Encoding UTF8
-Write-Host "V37 geometry-regime transform applied to $eaPath"
+Write-Host "V53 evidence-pruned hour-8 impulse sell transform applied to $eaPath"
